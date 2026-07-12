@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tamiva · Admin</title>
+<style>
+  :root {
+    --bg: #0F0507;
+    --surface: #1A0A0D;
+    --surface-raised: #241014;
+    --maroon: #8B1A2A;
+    --ember: #B85028;
+    --gold: #D4A72C;
+    --gold-bright: #E8C15C;
+    --text: #FFF5E1;
+    --text-secondary: #C9B896;
+    --text-faint: #8A7C60;
+    --success: #7FB27C;
+    --error: #E0745C;
+    --divider: #33D4A72C;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Manrope", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { color: var(--gold-bright); text-decoration: underline; }
+  h1, h2, h3 { margin: 0 0 12px 0; font-weight: 600; letter-spacing: -0.01em; }
+  h1 { font-size: 28px; }
+  h2 { font-size: 18px; color: var(--text-secondary); }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 2px; color: var(--gold); margin-top: 32px; margin-bottom: 16px; }
+  .container { max-width: 1280px; margin: 0 auto; padding: 32px 20px 64px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--divider);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--divider);
+    border-radius: 12px;
+    padding: 16px 20px;
+  }
+  .stat .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+  .stat .value { font-size: 28px; font-weight: 700; color: var(--text); }
+  .stat .sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+  .stat.success .value { color: var(--success); }
+  .stat.error .value { color: var(--error); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-faint);
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--divider);
+    font-weight: 600;
+  }
+  td {
+    padding: 12px 8px;
+    border-bottom: 1px solid rgba(255, 245, 225, 0.05);
+    color: var(--text);
+  }
+  tr:last-child td { border-bottom: none; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: rgba(212, 167, 44, 0.06); }
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .pill.ready { background: rgba(127, 178, 124, 0.15); color: var(--success); }
+  .pill.failed { background: rgba(224, 116, 92, 0.15); color: var(--error); }
+  .pill.queued, .pill.generating, .pill.rendering { background: rgba(212, 167, 44, 0.15); color: var(--gold); }
+  .pill.draft { background: rgba(201, 184, 150, 0.15); color: var(--text-secondary); }
+  .input, .button {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--divider);
+    background: var(--surface-raised);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .input:focus { border-color: var(--gold); }
+  .button {
+    cursor: pointer;
+    background: var(--gold);
+    color: #1A0F02;
+    font-weight: 700;
+    border-color: var(--gold);
+  }
+  .button:hover { background: var(--gold-bright); border-color: var(--gold-bright); }
+  .button.ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: var(--divider);
+  }
+  .button.ghost:hover { color: var(--text); border-color: var(--gold); background: transparent; }
+  .login-screen {
+    max-width: 420px;
+    margin: 80px auto 0;
+  }
+  .login-screen .card { text-align: center; padding: 32px; }
+  .login-screen h1 { font-size: 24px; margin-bottom: 8px; }
+  .login-screen p { color: var(--text-secondary); margin-bottom: 24px; }
+  .login-screen .input { width: 100%; margin-bottom: 12px; font-family: monospace; }
+  .login-screen .button { width: 100%; }
+  .err {
+    background: rgba(224, 116, 92, 0.1);
+    border: 1px solid rgba(224, 116, 92, 0.3);
+    color: var(--error);
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .breadcrumb { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+  .breadcrumb a { color: var(--gold); }
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-faint);
+    font-style: italic;
+  }
+  .deliverable-group {
+    margin-bottom: 32px;
+    background: var(--surface);
+    border: 1px solid var(--divider);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .deliverable-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .deliverable-group-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--gold);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .deliverable-group-header .meta { color: var(--text-faint); font-size: 12px; }
+  .asset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+  }
+  .asset-card {
+    background: var(--surface-raised);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .asset-card img, .asset-card video {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #000;
+  }
+  .asset-card .meta {
+    padding: 8px 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--divider);
+    line-height: 1.5;
+  }
+  .asset-card .meta strong { color: var(--text); display: block; }
+  .asset-card .meta a { display: inline-block; margin-top: 2px; }
+  .empty-asset {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(224, 116, 92, 0.08);
+    color: var(--error);
+    font-size: 12px;
+    text-align: center;
+    padding: 8px;
+    border: 1px dashed var(--error);
+  }
+  .job-row {
+    background: var(--surface-raised);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+  .job-row .err {
+    margin-top: 6px;
+    color: var(--error);
+    background: rgba(224, 116, 92, 0.08);
+    padding: 6px 10px;
+    border-radius: 4px;
+    word-break: break-word;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .header-row .meta-block { font-size: 12px; color: var(--text-faint); line-height: 1.7; }
+  .row-actions { display: flex; gap: 8px; }
+  .num { text-align: right; }
+  .loading { color: var(--text-secondary); padding: 24px; text-align: center; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="container" id="root">
+  <div class="loading">Loading...</div>
+</div>
+
+<script>
+"use strict";
+
+const params = new URLSearchParams(location.search);
+const ADMIN_KEY = params.get("key") || localStorage.getItem("tamiva_admin_key") || "";
+
+function setKey(k) {
+  localStorage.setItem("tamiva_admin_key", k);
+  const u = new URL(location.href);
+  u.searchParams.set("key", k);
+  history.replaceState({}, "", u.toString());
+}
+
+function clearKey() {
+  localStorage.removeItem("tamiva_admin_key");
+  location.search = "";
+}
+
+async function api(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  const url = path + sep + "key=" + encodeURIComponent(ADMIN_KEY);
+  const res = await fetch(url);
+  if (res.status === 401) {
+    clearKey();
+    location.reload();
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error("API " + res.status + ": " + text);
+  }
+  return res.json();
+}
+
+function $(sel) { return document.querySelector(sel); }
+const root = $("#root");
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function pill(status) {
+  return '<span class="pill ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>';
+}
+
+function fmtRel(s) {
+  if (!s) return "";
+  const ms = Date.now() - new Date(s).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h ago";
+  const d = Math.floor(h / 24);
+  return d + "d ago";
+}
+
+function renderLogin(errMsg) {
+  root.innerHTML = ''
+    + '<div class="login-screen">'
+    + '  <div class="card">'
+    + '    <h1>Tamiva · Admin</h1>'
+    + '    <p>Enter your admin key to view customer history.</p>'
+    + (errMsg ? '<div class="err">' + escapeHtml(errMsg) + '</div>' : '')
+    + '    <form id="login-form">'
+    + '      <input id="key-input" class="input" type="password" placeholder="ADMIN_API_KEY" autocomplete="off" autofocus />'
+    + '      <button class="button" type="submit">Sign in</button>'
+    + '    </form>'
+    + '  </div>'
+    + '</div>';
+  $("#login-form").addEventListener("submit", function(e) {
+    e.preventDefault();
+    var k = $("#key-input").value.trim();
+    if (!k) return;
+    setKey(k);
+    location.reload();
+  });
+}
+
+function renderDashboard(stats, customers) {
+  var successRate = stats.today.successRate == null ? "-" : stats.today.successRate + "%";
+  var successStatClass = stats.today.failed > 0 ? "error" : "success";
+  var lastLogo = stats.lastByType.logo;
+
+  root.innerHTML = ''
+    + '<div class="header-row">'
+    + '  <h1>Tamiva · Admin</h1>'
+    + '  <div class="row-actions">'
+    + '    <input id="search" class="input" placeholder="Search by name, email, or phone..." />'
+    + '    <button class="button ghost" id="logout">Sign out</button>'
+    + '  </div>'
+    + '</div>'
+    + '<h3>Overview</h3>'
+    + '<div class="stat-grid">'
+    + '  <div class="stat">'
+    + '    <div class="label">Total customers</div>'
+    + '    <div class="value">' + customers.length + '</div>'
+    + '    <div class="sub">' + stats.totalProjects + ' total projects</div>'
+    + '  </div>'
+    + '  <div class="stat ' + successStatClass + '">'
+    + '    <label class="label">Today\'s success rate</label>'
+    + '    <div class="value">' + successRate + '</div>'
+    + '    <div class="sub">' + (stats.today.total - stats.today.failed) + '/' + stats.today.total + ' jobs OK</div>'
+    + '  </div>'
+    + '  <div class="stat">'
+    + '    <div class="label">Today\'s volume</div>'
+    + '    <div class="value">' + stats.today.total + '</div>'
+    + '    <div class="sub">' + stats.today.failed + ' failed</div>'
+    + '  </div>'
+    + '  <div class="stat">'
+    + '    <label class="label">Last logo</label>'
+    + '    <div class="value" style="font-size:14px;">' + (lastLogo ? pill(lastLogo.status) : "-") + '</div>'
+    + '    <div class="sub">' + (lastLogo ? fmtRel(lastLogo.createdAt) : "never") + '</div>'
+    + '  </div>'
+    + '</div>'
+    + '<h3>Customers</h3>'
+    + '<div class="card" style="padding: 0;">'
+    + '  <table>'
+    + '    <thead><tr><th>Name</th><th>Email</th><th>Industry</th><th class="num">Projects</th><th class="num">Successful</th><th>Last activity</th></tr></thead>'
+    + '    <tbody id="customer-tbody"></tbody>'
+    + '  </table>'
+    + '</div>';
+
+  var tbody = $("#customer-tbody");
+  var filterInput = $("#search");
+  function renderRows(filter) {
+    var f = (filter || "").trim().toLowerCase();
+    var filtered = f
+      ? customers.filter(function(c) {
+          return (c.name || "").toLowerCase().includes(f)
+            || (c.email || "").toLowerCase().includes(f)
+            || (c.fullName || "").toLowerCase().includes(f)
+            || (c.phone || "").toLowerCase().includes(f)
+            || (c.industry || "").toLowerCase().includes(f);
+        })
+      : customers;
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No customers match.</td></tr>';
+      return;
+    }
+    var rows = '';
+    filtered.forEach(function(c) {
+      var last = c.lastProject
+        ? pill(c.lastProject.status) + ' <span style="color:var(--text-faint);">' + fmtRel(c.lastProject.createdAt) + '</span>'
+        : "-";
+      rows += ''
+        + '<tr class="clickable" data-customer-name="' + escapeHtml(c.name) + '">'
+        + '  <td><strong>' + escapeHtml(c.name) + '</strong></td>'
+        + '  <td>' + escapeHtml(c.email || "-") + '</td>'
+        + '  <td>' + escapeHtml(c.industry || "-") + '</td>'
+        + '  <td class="num">' + c.projectCount + '</td>'
+        + '  <td class="num">' + c.successCount + '</td>'
+        + '  <td>' + last + '</td>'
+        + '</tr>';
+    });
+    tbody.innerHTML = rows;
+  }
+  renderRows("");
+  filterInput.addEventListener("input", function(e) { renderRows(e.target.value); });
+  tbody.addEventListener("click", function(e) {
+    var row = e.target.closest("tr.clickable");
+    if (!row) return;
+    var name = row.dataset.customerName;
+    location.hash = "#customer/" + encodeURIComponent(name);
+    renderCustomer(name);
+  });
+  $("#logout").addEventListener("click", function() {
+    if (confirm("Sign out and clear admin key?")) clearKey();
+  });
+}
+
+// Render one asset thumbnail. If url is missing (0-asset bug from
+// before v14), show a red dashed placeholder explaining why.
+function renderAssetCard(a) {
+  var body;
+  if (!a.url) {
+    body = '<div class="empty-asset">No asset URL<br><small>Generation finished but produced 0 outputs</small></div>';
+  } else if (a.type === "video_final") {
+    body = '<video src="' + escapeHtml(a.url) + '" controls preload="metadata"></video>';
+  } else {
+    body = '<img src="' + escapeHtml(a.url) + '" loading="lazy" />';
+  }
+  var meta = '<strong>' + escapeHtml(a.type) + '</strong>';
+  if (a.slideIndex != null) meta += ' · slide ' + (a.slideIndex + 1);
+  meta += '<br><span style="color:var(--text-faint);">' + fmtRel(a.createdAt) + '</span>';
+  if (a.url) meta += '<br><a href="' + escapeHtml(a.url) + '" target="_blank">open ↗</a>';
+  return '<div class="asset-card">' + body + '<div class="meta">' + meta + '</div></div>';
+}
+
+// Render one project card. Groups assets by project, shows status +
+// job errors below.
+function renderProjectCard(p) {
+  var statusPill = pill(p.status);
+  var assetsHtml = '';
+  if (p.assets && p.assets.length > 0) {
+    assetsHtml = '<div class="asset-grid">';
+    p.assets.forEach(function(a) { assetsHtml += renderAssetCard(a); });
+    assetsHtml += '</div>';
+  } else {
+    assetsHtml = '<div class="empty-asset" style="aspect-ratio: auto; padding: 16px;">No assets generated. Likely cause: <code>' + escapeHtml(p.status === 'failed' ? (p.jobs[0] && p.jobs[0].error) || 'unknown error' : 'openai/gemini returned 0 outputs') + '</code></div>';
+  }
+
+  var jobsHtml = '';
+  if (p.jobs && p.jobs.length > 0) {
+    p.jobs.forEach(function(j) {
+      jobsHtml += '<div class="job-row">'
+        + '<strong>' + escapeHtml(j.stage) + '</strong> · ' + pill(j.status)
+        + ' · ' + escapeHtml(j.provider)
+        + ' · ' + j.retries + ' retries'
+        + (j.error ? '<div class="err">' + escapeHtml(j.error) + '</div>' : '')
+        + '</div>';
+    });
+  }
+
+  return ''
+    + '<div class="deliverable-group">'
+    + '  <div class="deliverable-group-header">'
+    + '    <h2>' + escapeHtml(p.type) + ' ' + statusPill + '</h2>'
+    + '    <span class="meta">' + fmtRel(p.createdAt) + ' · took ' + p.durationSeconds + 's</span>'
+    + '  </div>'
+    + '  ' + assetsHtml
+    + (jobsHtml ? '  <div style="margin-top: 16px;">' + jobsHtml + '</div>' : '')
+    + '</div>';
+}
+
+// Render one customer match - show every project (grouped by status)
+// so the founder can see all generated deliverables in one place.
+function renderCustomerMatch(match) {
+  var c = match.customer;
+  var readyProjects = match.projects.filter(function(p) { return p.status === 'ready' && p.assets.length > 0; });
+  var emptyProjects = match.projects.filter(function(p) { return p.status === 'ready' && p.assets.length === 0; });
+  var failedProjects = match.projects.filter(function(p) { return p.status === 'failed'; });
+  var inProgressProjects = match.projects.filter(function(p) { return !['ready', 'failed'].includes(p.status); });
+
+  var html = ''
+    + '<div class="breadcrumb"><a href="#" id="back">← Back to all customers</a></div>'
+    + '<div class="header-row">'
+    + '  <div>'
+    + '    <h1>' + escapeHtml(c.name) + '</h1>'
+    + '    <div class="meta-block">'
+    + '      <div>' + escapeHtml(c.email || "") + (c.phone ? ' · ' + escapeHtml(c.phone) : '') + '</div>'
+    + '      <div>' + escapeHtml(c.industry || "—") + '</div>'
+    + '      <div style="margin-top: 6px;">'
+    + '        <span class="pill ready">' + readyProjects.length + ' deliverables</span> '
+    + (failedProjects.length ? '<span class="pill failed">' + failedProjects.length + ' failed</span> ' : '')
+    + (emptyProjects.length ? '<span class="pill failed">' + emptyProjects.length + ' empty (ready but no assets)</span> ' : '')
+    + (inProgressProjects.length ? '<span class="pill queued">' + inProgressProjects.length + ' in progress</span>' : '')
+    + '      </div>'
+    + '    </div>'
+    + '  </div>'
+    + '  <div class="row-actions"><button class="button ghost" id="logout">Sign out</button></div>'
+    + '</div>';
+
+  if (readyProjects.length > 0) {
+    html += '<h3>Generated deliverables (' + readyProjects.length + ')</h3>';
+    readyProjects.forEach(function(p) { html += renderProjectCard(p); });
+  }
+  if (emptyProjects.length > 0) {
+    html += '<h3 style="color: var(--error);">Ready but no assets (' + emptyProjects.length + ')</h3>';
+    html += '<div class="card"><div class="empty">These jobs completed without producing output. Usually an upstream API issue or the b64_json fix in v14. Re-run from the app to retry.</div>';
+    emptyProjects.forEach(function(p) { html += renderProjectCard(p); });
+    html += '</div>';
+  }
+  if (inProgressProjects.length > 0) {
+    html += '<h3>In progress (' + inProgressProjects.length + ')</h3>';
+    inProgressProjects.forEach(function(p) { html += renderProjectCard(p); });
+  }
+  if (failedProjects.length > 0) {
+    html += '<h3 style="color: var(--error);">Failed (' + failedProjects.length + ')</h3>';
+    failedProjects.forEach(function(p) { html += renderProjectCard(p); });
+  }
+  if (match.projects.length === 0) {
+    html += '<div class="card"><div class="empty">No projects yet for this customer.</div></div>';
+  }
+
+  return html;
+}
+
+function renderCustomer(customerName) {
+  root.innerHTML = ''
+    + '<div class="breadcrumb"><a href="#" id="back">← Back to all customers</a></div>'
+    + '<div class="header-row"><h1>' + escapeHtml(customerName) + '</h1>'
+    + '  <div class="meta" id="customer-meta">Loading...</div></div>'
+    + '<div id="customer-body"><div class="loading">Loading projects...</div></div>';
+  $("#back").addEventListener("click", function(e) {
+    e.preventDefault();
+    location.hash = "";
+    bootstrap();
+  });
+
+  api("/admin/customers/" + encodeURIComponent(customerName) + "/full").then(function(resp) {
+    if (resp.matches.length === 0) {
+      $("#customer-body").innerHTML = '<div class="err">No customer found matching "' + escapeHtml(customerName) + '"</div>';
+      return;
+    }
+    if (resp.matches.length > 1) {
+      var disambig = '<div class="card"><div class="meta-block">'
+        + '<strong>' + resp.matches.length + ' customers matched.</strong> Showing all of them below. Be more specific (e.g. full email) to narrow down.</div></div>';
+      $("#customer-body").innerHTML = disambig;
+      resp.matches.forEach(function(m) {
+        var div = document.createElement("div");
+        div.innerHTML = renderCustomerMatch(m);
+        $("#customer-body").appendChild(div);
+      });
+    } else {
+      $("#customer-body").innerHTML = renderCustomerMatch(resp.matches[0]);
+    }
+    $("#customer-body").addEventListener("click", function(e) {
+      if (e.target && e.target.id === "logout") clearKey();
+    }, { once: true });
+  }).catch(function(err) {
+    $("#customer-body").innerHTML = '<div class="err">Failed to load: ' + escapeHtml(err.message) + '</div>';
+  });
+}
+
+function bootstrap() {
+  if (!ADMIN_KEY) {
+    renderLogin();
+    return;
+  }
+  var hash = location.hash;
+  var m = hash.match(/^#customer\/(.+)$/);
+  if (m) {
+    return renderCustomer(decodeURIComponent(m[1]));
+  }
+  Promise.all([
+    api("/admin/stats"),
+    api("/admin/customers?limit=200"),
+  ]).then(function(results) {
+    renderDashboard(results[0], results[1].customers);
+  }).catch(function(err) {
+    if (/Unauthorized/i.test(err.message)) return;
+    renderLogin(err.message);
+  });
+}
+
+window.addEventListener("hashchange", bootstrap);
+bootstrap();
+</script>
+
+</body>
+</html>

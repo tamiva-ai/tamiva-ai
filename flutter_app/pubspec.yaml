@@ -1,0 +1,37 @@
+name: tamiva_app
+description: Tamiva self-serve brand asset generator (logo, video, carousel).
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  image_picker: ^1.1.2
+  provider: ^6.1.2
+  cached_network_image: ^3.4.1
+  mime: ^1.0.5
+  http_parser: ^4.0.2
+  google_fonts: ^6.2.1
+  url_launcher: ^6.3.0
+  lottie: ^3.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: true
+  image_path: "assets/icon/app_icon.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+    - assets/hero/
+    - assets/lottie/

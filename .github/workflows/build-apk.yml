@@ -1,0 +1,61 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pin Flutter to 3.24.5 (read from .github/flutter-version so it
+      # can be bumped without editing this file). Newer 3.3x versions
+      # changed how flutter create scaffolds the Gradle project, which
+      # breaks the "Scaffold native Android project" step below.
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: .github/flutter-version
+
+      - name: Scaffold native Android project
+        working-directory: flutter_app
+        run: flutter create . --platforms=android --org com.tamiva
+
+      - name: Ensure INTERNET permission and browser queries
+        working-directory: flutter_app
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
+            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
+          fi
+          # Android 11+ package visibility - url_launcher needs to see
+          # browser and app intent handlers or launchUrl() silently fails.
+          if ! grep -q "<queries>" "$MANIFEST"; then
+            sed -i '/<\/manifest>/i\    <queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="https" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="http" />\n        </intent>\n    </queries>' "$MANIFEST"
+          fi
+          cat "$MANIFEST"
+
+      - name: Install dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Generate app icon
+        working-directory: flutter_app
+        run: dart run flutter_launcher_icons
+
+      - name: Set app display name to Tamiva
+        working-directory: flutter_app
+        run: |
+          sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
+
+      - name: Build APK
+        working-directory: flutter_app
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamiva-app-release
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk

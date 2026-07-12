@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProjectType {
+  logo
+  video
+  carousel
+  full_package
+}
+
+enum ProjectStatus {
+  draft
+  queued
+  generating
+  rendering
+  ready
+  failed
+}
+
+enum JobStage {
+  hero_image
+  storyboard
+  video_prompt
+  render
+  composite
+  copy_generation
+}
+
+enum JobProvider {
+  veo_3_1
+  omni_flash
+  gpt_image
+  elevenlabs
+  suno
+  claude
+}
+
+enum JobStatus {
+  queued
+  running
+  succeeded
+  failed
+}
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  fullName       String?
+  phone          String?  @unique
+  passwordHash   String?
+  phoneVerified  Boolean  @default(false)
+  authProvider   String   @default("email")
+  creditsBalance Int      @default(0)
+  // v24: tier system. Free users get 1 of each artifact forever; Pro
+  // is unlocked by the PUT /business-profiles/by-user/:id endpoint
+  // (called after a mock payment). tierUpdatedAt is bumped each time
+  // a Pro user starts a new regeneration cycle, so the worker can
+  // tell when a cycle completes and lock the user back to free.
+  tier          String   @default("free")
+  tierUpdatedAt DateTime?
+  createdAt      DateTime @default(now())
+
+  businessProfiles BusinessProfile[]
+}
+
+model BusinessProfile {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  name            String
+  industry        String
+  tagline         String?
+  tone            String?
+  brandColors     Json?
+  targetAudience  String?
+  logoStylePrefs  Json?
+  // v24: two new CSV-string inputs that drive the prompts for all
+  // three deliverables. Max 2 selections each, taken from fixed lists
+  // (Warm/Cool/Monochrome/Earthy/Pastel/Vibrant palettes and
+  // Modern default/Editorial/Tech-forward/Elegant serif/Utility/Bold
+  // display font pairs).
+  palettePreference String?
+  fontPreference    String?
+  createdAt       DateTime @default(now())
+
+  ambassadors BrandAmbassador[]
+  projects    Project[]
+}
+
+model BrandAmbassador {
+  id                String   @id @default(uuid())
+  businessProfileId String
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id])
+  photoUrls         String[]
+  angleLabels       String[]
+  createdAt         DateTime @default(now())
+}
+
+model Project {
+  id                String        @id @default(uuid())
+  businessProfileId String
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id])
+  type              ProjectType
+  status            ProjectStatus @default(draft)
+  creditsUsed       Int           @default(0)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  jobs   GenerationJob[]
+  assets Asset[]
+}
+
+model GenerationJob {
+  id           String      @id @default(uuid())
+  projectId    String
+  project      Project     @relation(fields: [projectId], references: [id])
+  stage        JobStage
+  provider     JobProvider
+  status       JobStatus   @default(queued)
+  inputPayload Json
+  outputUrl    String?
+  error        String?
+  retries      Int         @default(0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+enum AssetType {
+  logo_variant
+  video_final
+  carousel_slide
+}
+
+model Asset {
+  id          String    @id @default(uuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id])
+  type        AssetType
+  slideIndex  Int?
+  url         String
+  overlayData Json?
+  createdAt   DateTime  @default(now())
+}
