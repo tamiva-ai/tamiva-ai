@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../errors/user_facing_error.dart';
 import '../services/api_client.dart';
 import '../services/asset_saver.dart';
+import '../services/payment_service.dart';
 import '../widgets/net_image.dart';
 import '../models/models.dart';
 import '../data/palette_styles.dart';
@@ -247,8 +248,32 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
 
   void _showComingSoon() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Tamiva Pro checkout is coming soon.')),
+      const SnackBar(
+        content: Text('Included in Tamiva Pro — tap Upgrade to unlock.'),
+      ),
     );
+  }
+
+  Future<void> _startProCheckout() async {
+    final result = await PaymentService.startProCheckout(
+      api: widget.apiClient,
+      businessProfileId: widget.businessProfileId,
+    );
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (result.ok) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text("You're now on Tamiva Pro.")),
+      );
+    } else if (result.cancelled) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Checkout cancelled.')),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(content: Text(result.message ?? 'Checkout failed.')),
+      );
+    }
   }
 
   /// Centralized handler for taps on the GenerationStatusBoard rows.
@@ -353,8 +378,8 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
           child: GradientCtaButton(
-            onPressed: _showComingSoon,
-            child: const Text('Upgrade to Tamiva Pro · ₹499/mo'),
+            onPressed: _startProCheckout,
+            child: const Text('Upgrade to Tamiva Pro · ₹5000/mo'),
           ),
         ),
       ),

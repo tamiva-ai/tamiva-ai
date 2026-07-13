@@ -7,6 +7,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { uploadsRouter } from "./routes/uploads.js";
 import { authRouter } from "./routes/auth.js";
 import { adminRouter } from "./routes/admin.js";
+import { paymentsRouter } from "./routes/payments.js";
 
 const app = express();
 app.use(cors());
@@ -29,6 +30,7 @@ app.use("/projects", projectsRouter);
 app.use("/uploads", uploadsRouter);
 app.use("/auth", authRouter);
 app.use("/admin", adminRouter);
+app.use("/payments", paymentsRouter);
 
 // Catches errors thrown by route handlers/multer and returns JSON instead
 // of Express's default HTML error page - makes debugging from the app

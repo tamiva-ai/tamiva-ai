@@ -7,6 +7,20 @@ import { sendPasswordResetEmail } from "../providers/email.js";
 
 export const authRouter = Router();
 
+// Email normalization. Emails are case-insensitive in practice, so we
+// store them lowercased and always look them up case-insensitively.
+// This keeps signup / login / forgot-password consistent and prevents a
+// mixed-case address from being treated as a different (or missing) user.
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function findUserByEmail(email: string) {
+  return prisma.user.findFirst({
+    where: { email: { equals: normalizeEmail(email), mode: "insensitive" } },
+  });
+}
+
 const twilioClient =
   process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -110,7 +124,7 @@ authRouter.post("/signup", async (req, res) => {
     return res.status(400).json({ error: "Please verify your phone number first." });
   }
 
-  const existingEmail = await prisma.user.findUnique({ where: { email: parsed.data.email } });
+  const existingEmail = await findUserByEmail(parsed.data.email);
   if (existingEmail) {
     return res.status(409).json({ error: "This email already has a studio. Sign in instead?" });
   }
@@ -125,7 +139,7 @@ authRouter.post("/signup", async (req, res) => {
   try {
     const user = await prisma.user.create({
       data: {
-        email: parsed.data.email,
+        email: normalizeEmail(parsed.data.email),
         fullName: parsed.data.fullName,
         phone: parsed.data.phone,
         passwordHash,
@@ -160,7 +174,7 @@ authRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
+  const user = await findUserByEmail(parsed.data.email);
   if (!user) {
     return res.status(404).json({ error: "This email isn't registered." });
   }
@@ -206,8 +220,8 @@ authRouter.post("/forgot-password", async (req, res) => {
   const parsed = forgotPasswordSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const email = parsed.data.email.toLowerCase();
-  const user = await prisma.user.findUnique({ where: { email } });
+  const email = normalizeEmail(parsed.data.email);
+  const user = await findUserByEmail(email);
 
   // Product decision: tell the user directly when an email isn't
   // registered, rather than the enumeration-safe "always say sent".
@@ -238,7 +252,7 @@ authRouter.post("/reset-password", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const { email: rawEmail, code, newPassword } = parsed.data;
-  const email = rawEmail.toLowerCase();
+  const email = normalizeEmail(rawEmail);
 
   const stored = resetCodes.get(email);
   if (!stored || Date.now() > stored.expiresAt) {
@@ -256,7 +270,7 @@ authRouter.post("/reset-password", async (req, res) => {
     return res.status(400).json({ error: "That code doesn't match. Try again." });
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await findUserByEmail(email);
   if (!user) {
     // Shouldn't happen if we issued a code for this email, but handle it.
     resetCodes.delete(email);

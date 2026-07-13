@@ -1,3 +1,38 @@
+# v33 — Razorpay Pro payments, email normalization, price fix
+
+Built 2026-07-13 on top of v32.
+
+## ⚠️ Required Railway env vars (payments won't work without these)
+Set on the backend service in Railway → Variables:
+- `RAZORPAY_KEY_ID`   — your Razorpay **key id** (rzp_live_… or rzp_test_…)
+- `RAZORPAY_KEY_SECRET` — your Razorpay **key secret** (server-only; never in the app or repo)
+- `RAZORPAY_PRO_AMOUNT_PAISE` — optional, defaults to `500000` (₹5000)
+
+If the key vars are unset, `/payments/*` returns a clean 503 and the app shows
+"Payments aren't set up yet" instead of crashing. **Regenerate the secret if it
+was ever pasted into a chat/message.**
+
+## Fixes in v33
+
+| Path | Fix |
+|---|---|
+| `backend/src/routes/payments.ts` | (NEW) `POST /payments/order` (creates a ₹5000 Razorpay order; accepts userId OR businessProfileId) and `POST /payments/verify` (HMAC signature check, then flips tier→pro). Secret read from env only. |
+| `backend/src/index.ts` | Mounts `paymentsRouter` at `/payments`. |
+| `backend/package.json` | Added `razorpay` SDK. |
+| `backend/src/routes/auth.ts` | Email normalization: `normalizeEmail` + case-insensitive `findUserByEmail` used across signup, login, forgot-password, reset. Fixes mixed-case emails being treated as different/missing users. |
+| `flutter_app/lib/services/payment_service.dart` | (NEW) Wraps razorpay_flutter checkout in a Future; verifies server-side. |
+| `flutter_app/lib/services/api_client.dart` | `createRazorpayOrder` + `verifyRazorpayPayment` + `RazorpayOrder` model. |
+| `flutter_app/lib/screens/brand_assets_screen.dart` | Pro price ₹499→₹5000; Upgrade button now runs real checkout; locked-tile hint retexted. |
+| `flutter_app/lib/screens/business_info_screen.dart` | Upgrade button runs real Razorpay checkout; removed the dead mock-payment screen. |
+| `flutter_app/pubspec.yaml` | Added `razorpay_flutter`. |
+
+## Watch on first deploy
+- **Backend build**: first build with the `razorpay` SDK (types). If tsc complains about razorpay types, tell me and I'll add a shim.
+- **APK build**: first build with `razorpay_flutter` (native). CI scaffolds Android unminified, so no ProGuard rules needed — but this is the step to watch.
+- **Email casing**: existing mixed-case rows are matched case-insensitively (no data migration); brand-new signups are stored lowercased.
+
+---
+
 # v32 — Auth UX, logo display, quota race & download fixes
 
 Built 2026-07-13 on top of v31. Six fixes from the last session

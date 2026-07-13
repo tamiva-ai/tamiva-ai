@@ -130,6 +130,55 @@ class ApiClient {
     );
   }
 
+  /// Creates a Razorpay order for Tamiva Pro. Pass whichever identifier
+  /// the calling screen has — the backend resolves the user and returns
+  /// the (public) key id plus the resolved userId for verification.
+  Future<RazorpayOrder> createRazorpayOrder({
+    String? userId,
+    String? businessProfileId,
+  }) async {
+    final res = await _post(
+      Uri.parse('$baseUrl/payments/order'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        if (userId != null) 'userId': userId,
+        if (businessProfileId != null) 'businessProfileId': businessProfileId,
+      }),
+    );
+    _throwIfError(res);
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    return RazorpayOrder(
+      orderId: body['orderId'] as String,
+      amount: (body['amount'] as num).toInt(),
+      currency: body['currency'] as String? ?? 'INR',
+      keyId: body['keyId'] as String,
+      userId: body['userId'] as String,
+    );
+  }
+
+  /// Verifies a completed Razorpay payment server-side (HMAC signature).
+  /// On success the backend flips the user to Pro; returns the new tier.
+  Future<String> verifyRazorpayPayment({
+    required String userId,
+    required String orderId,
+    required String paymentId,
+    required String signature,
+  }) async {
+    final res = await _post(
+      Uri.parse('$baseUrl/payments/verify'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'userId': userId,
+        'razorpay_order_id': orderId,
+        'razorpay_payment_id': paymentId,
+        'razorpay_signature': signature,
+      }),
+    );
+    _throwIfError(res);
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    return body['tier'] as String? ?? 'pro';
+  }
+
   /// Kicks off a password reset - sends a 6-digit code to the user's
   /// email if the account exists.
   Future<void> forgotPassword({required String email}) async {
@@ -512,4 +561,24 @@ class BusinessProfileJobSummary {
       error: json['error'] as String?,
     );
   }
+}
+
+/// A Razorpay order created by the backend, ready to hand to the
+/// razorpay_flutter checkout sheet. [keyId] is the public key id; the
+/// secret stays on the server. [userId] is the backend-resolved user to
+/// verify the payment against.
+class RazorpayOrder {
+  final String orderId;
+  final int amount; // in paise
+  final String currency;
+  final String keyId;
+  final String userId;
+
+  const RazorpayOrder({
+    required this.orderId,
+    required this.amount,
+    required this.currency,
+    required this.keyId,
+    required this.userId,
+  });
 }

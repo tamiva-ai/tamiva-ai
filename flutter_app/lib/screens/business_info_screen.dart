@@ -6,6 +6,7 @@ import '../data/font_pairs.dart';
 import '../errors/user_facing_error.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
+import '../services/payment_service.dart';
 import '../theme/tamiva_theme.dart';
 import '../widgets/hero_scaffold.dart';
 import '../widgets/inline_error.dart';
@@ -176,33 +177,29 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     }
   }
 
-  Future<void> _showProComingSoon() async {
-    // v24: instead of a snackbar, show a mock payment screen. After
-    // the user "pays" we route back here with tier='pro' so they can
-    // edit + bulk-generate.
-    final paid = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => _PaymentMockScreen()),
+  Future<void> _startProCheckout() async {
+    final result = await PaymentService.startProCheckout(
+      api: widget.apiClient,
+      userId: widget.userId,
     );
-    if (paid == true) {
-      try {
-        final updated = await widget.apiClient.upgradeToPro(userId: widget.userId);
-        if (!mounted) return;
-        setState(() {
-          _tier = updated.tier;
-          _locked = false; // unlock the form
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Upgrade successful. Edit your business.')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(UserFacingError.from(e, operation: 'upgrade').message),
-        ));
-      }
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tamiva Pro checkout is coming soon.')),
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (result.ok) {
+      // Backend already flipped the tier to Pro during verification.
+      setState(() {
+        _tier = result.tier ?? 'pro';
+        _locked = false; // unlock the form
+      });
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Upgrade successful. Edit your business.')),
+      );
+    } else if (result.cancelled) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Checkout cancelled.')),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(content: Text(result.message ?? 'Checkout failed.')),
       );
     }
   }
@@ -352,7 +349,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                   ),
                   const SizedBox(height: 28),
                   GradientCtaButton(
-                    onPressed: _showProComingSoon,
+                    onPressed: _startProCheckout,
                     child: const Text('Upgrade to Tamiva Pro · ₹5000/mo'),
                   ),
                   const SizedBox(height: 8),
@@ -645,88 +642,6 @@ class _FontPicker extends StatelessWidget {
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,
-    );
-  }
-}
-
-/// v24: Mock payment screen. Shows ₹5000, a "Pay" button, fake
-/// spinner, success state. Returns true to the caller if the user
-/// "paid", false if they cancelled.
-class _PaymentMockScreen extends StatefulWidget {
-  @override
-  State<_PaymentMockScreen> createState() => _PaymentMockScreenState();
-}
-
-class _PaymentMockScreenState extends State<_PaymentMockScreen> {
-  bool _paying = false;
-  bool _paid = false;
-
-  Future<void> _startPayment() async {
-    setState(() => _paying = true);
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-    setState(() {
-      _paying = false;
-      _paid = true;
-    });
-    await Future.delayed(const Duration(milliseconds: 1200));
-    if (!mounted) return;
-    Navigator.of(context).pop(true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    return Scaffold(
-      backgroundColor: TamivaColors.background,
-      appBar: AppBar(title: const Text('Tamiva Pro checkout')),
-      body: Center(
-        child: Container(
-          padding: const EdgeInsets.all(28),
-          margin: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: TamivaColors.surface,
-            border: Border.all(color: TamivaColors.divider),
-            borderRadius: BorderRadius.circular(TamivaRadii.lg),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.lock_open_rounded, color: TamivaColors.gold, size: 48),
-              const SizedBox(height: 16),
-              Text('Unlock Tamiva Pro', style: textTheme.headlineMedium),
-              const SizedBox(height: 8),
-              Text(
-                'One-time payment. Edit your business profile and generate 20 new deliverables.',
-                textAlign: TextAlign.center,
-                style: textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 24),
-              Text('₹5000 / month', style: textTheme.displayMedium?.copyWith(color: TamivaColors.gold)),
-              const SizedBox(height: 24),
-              if (_paying) ...[
-                const CircularProgressIndicator(color: TamivaColors.gold),
-                const SizedBox(height: 12),
-                Text('Processing...', style: textTheme.bodyMedium),
-              ] else if (_paid) ...[
-                const Icon(Icons.check_circle, color: TamivaColors.success, size: 36),
-                const SizedBox(height: 12),
-                Text('Payment successful', style: textTheme.titleLarge?.copyWith(color: TamivaColors.success)),
-              ] else ...[
-                GradientCtaButton(
-                  onPressed: _startPayment,
-                  child: const Text('Pay ₹5000'),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: Text('Cancel', style: textTheme.labelLarge?.copyWith(color: TamivaColors.textSecondary)),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
