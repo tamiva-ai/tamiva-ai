@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../errors/user_facing_error.dart';
 import '../services/api_client.dart';
@@ -294,14 +295,14 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
         await _showStaticPreview(
           context,
           title: 'Signature palette',
-          body: _ColorsDetailBody(),
+          body: _ColorsDetailBody(profile: _profile),
         );
         return;
       case 'typography':
         await _showStaticPreview(
           context,
           title: 'Type system',
-          body: _TypographyDetailBody(),
+          body: _TypographyDetailBody(profile: _profile),
         );
         return;
       case 'carousel':
@@ -471,13 +472,6 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             style: textTheme.bodyMedium,
           ),
           const SizedBox(height: 28),
-          if (_profile != null &&
-              (_profile!.palettePreference != null &&
-                  _profile!.palettePreference!.isNotEmpty ||
-               _profile!.fontPreference != null &&
-                  _profile!.fontPreference!.isNotEmpty))
-            _PreferencePreviewRow(profile: _profile!),
-          const SizedBox(height: 28),
           _BrandKitSection(
             title: 'Logo',
             hiddenCount: 3,
@@ -491,11 +485,11 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
           _BrandKitSection(
             title: 'Brand colors',
             hiddenCount: 4,
-            frontChild: const _ColorsPreview(),
+            frontChild: _ColorsPreview(profile: _profile),
             onFrontTap: () => _showStaticPreview(
               context,
               title: 'Signature palette',
-              body: _ColorsDetailBody(),
+              body: _ColorsDetailBody(profile: _profile),
             ),
             onLockedTap: _showComingSoon,
           ),
@@ -503,11 +497,11 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
           _BrandKitSection(
             title: 'Typography',
             hiddenCount: 4,
-            frontChild: const _TypographyPreview(),
+            frontChild: _TypographyPreview(profile: _profile),
             onFrontTap: () => _showStaticPreview(
               context,
               title: 'Type system',
-              body: _TypographyDetailBody(),
+              body: _TypographyDetailBody(profile: _profile),
             ),
             onLockedTap: _showComingSoon,
           ),
@@ -623,18 +617,49 @@ class _LogoPreview extends StatelessWidget {
   }
 }
 
+/// Resolves the palettes the user picked at signup (CSV of keys) into
+/// [PaletteStyle]s. Falls back to the default warm palette if none set.
+List<PaletteStyle> _resolvePalettes(BusinessProfile? profile) {
+  final keys = (profile?.palettePreference ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+  return keys.isEmpty
+      ? const [PaletteStyles.warm]
+      : keys.map(PaletteStyles.byKey).toList();
+}
+
+/// Resolves the font pairs the user picked at signup into [FontPair]s.
+/// Falls back to the modern default if none set.
+List<FontPair> _resolveFonts(BusinessProfile? profile) {
+  final keys = (profile?.fontPreference ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+  return keys.isEmpty
+      ? const [FontPairs.modernDefault]
+      : keys.map(FontPairs.byKey).toList();
+}
+
+/// The user's brand name for type previews, with a safe fallback.
+String _brandName(BusinessProfile? profile) {
+  final name = (profile?.name ?? '').trim();
+  return name.isEmpty ? 'Your Brand' : name;
+}
+
 class _ColorsPreview extends StatelessWidget {
-  const _ColorsPreview();
+  final BusinessProfile? profile;
+  const _ColorsPreview({this.profile});
 
   @override
   Widget build(BuildContext context) {
-    const swatches = [
-      TamivaColors.maroon,
-      TamivaColors.ember,
-      TamivaColors.gold,
-      TamivaColors.goldBright,
-      TamivaColors.background,
-    ];
+    final palettes = _resolvePalettes(profile);
+    final hexes = palettes.expand((p) => p.hexCodes).toList();
+    final label = palettes
+        .map((p) => p.displayName.split('(').first.trim())
+        .join(' · ');
     return Container(
       color: TamivaColors.surface,
       padding: const EdgeInsets.all(20),
@@ -644,13 +669,13 @@ class _ColorsPreview extends StatelessWidget {
         children: [
           Row(
             children: [
-              for (final c in swatches) ...[
+              for (final hex in hexes) ...[
                 Expanded(
                   child: AspectRatio(
                     aspectRatio: 1,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: c,
+                        color: _hexToColor(hex),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(color: TamivaColors.divider),
                       ),
@@ -663,7 +688,7 @@ class _ColorsPreview extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Text(
-            'Signature palette',
+            label.isEmpty ? 'Signature palette' : label,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: TamivaColors.textSecondary,
                   fontWeight: FontWeight.w600,
@@ -676,11 +701,15 @@ class _ColorsPreview extends StatelessWidget {
 }
 
 class _TypographyPreview extends StatelessWidget {
-  const _TypographyPreview();
+  final BusinessProfile? profile;
+  const _TypographyPreview({this.profile});
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final fonts = _resolveFonts(profile);
+    final primary = fonts.first;
+    final brand = _brandName(profile);
     return Container(
       color: TamivaColors.surface,
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
@@ -689,22 +718,34 @@ class _TypographyPreview extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            'Elevate.',
-            style: textTheme.displayMedium?.copyWith(
+            brand,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.getFont(
+              primary.googleFamily,
               fontSize: 34,
+              fontWeight: FontWeight.w600,
               color: TamivaColors.textPrimary,
             ),
           ),
           const SizedBox(height: 4),
           Text(
-            'Sora · Display face for headlines',
+            '${primary.displayName} · ${primary.googleFamily}',
             style: textTheme.bodyMedium?.copyWith(color: TamivaColors.gold),
           ),
-          const SizedBox(height: 10),
-          Text(
-            'Manrope for the body. Clean, geometric, highly legible at every scale.',
-            style: textTheme.bodyMedium?.copyWith(color: TamivaColors.textSecondary),
-          ),
+          if (fonts.length > 1) ...[
+            const SizedBox(height: 10),
+            Text(
+              brand,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.getFont(
+                fonts[1].googleFamily,
+                fontSize: 22,
+                color: TamivaColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1692,22 +1733,26 @@ class _LogoViewerScreenState extends State<_LogoViewerScreen> {
 /// Detailed view of the brand palette - used by the static-preview sheet
 /// when the user taps the Brand Colors tile.
 class _ColorsDetailBody extends StatelessWidget {
+  final BusinessProfile? profile;
+  const _ColorsDetailBody({this.profile});
+
   @override
   Widget build(BuildContext context) {
-    const swatches = [
-      ('Maroon', TamivaColors.maroon, '#8B1A2A'),
-      ('Maroon Deep', TamivaColors.maroonDeep, '#5F1019'),
-      ('Ember', TamivaColors.ember, '#B85028'),
-      ('Gold', TamivaColors.gold, '#D4A72C'),
-      ('Gold Bright', TamivaColors.goldBright, '#E8C15C'),
-      ('Background', TamivaColors.background, '#0F0507'),
-    ];
+    final palettes = _resolvePalettes(profile);
+    // Flatten selected palettes into (palette name, hex) rows.
+    final swatches = <(String, String)>[];
+    for (final p in palettes) {
+      final pname = p.displayName.split('(').first.trim();
+      for (final hex in p.hexCodes) {
+        swatches.add((pname, hex));
+      }
+    }
     final textTheme = Theme.of(context).textTheme;
     return ListView.separated(
       itemCount: swatches.length,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (_, i) {
-        final (name, color, hex) = swatches[i];
+        final (name, hex) = swatches[i];
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
@@ -1721,7 +1766,7 @@ class _ColorsDetailBody extends StatelessWidget {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: color,
+                  color: _hexToColor(hex),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: TamivaColors.divider),
                 ),
@@ -1733,7 +1778,7 @@ class _ColorsDetailBody extends StatelessWidget {
                   children: [
                     Text(name, style: textTheme.titleMedium),
                     const SizedBox(height: 2),
-                    Text(hex,
+                    Text(hex.toUpperCase(),
                         style: textTheme.bodyMedium?.copyWith(
                           color: TamivaColors.textSecondary,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -1752,25 +1797,34 @@ class _ColorsDetailBody extends StatelessWidget {
 /// Detailed type system view - used by the static-preview sheet when the
 /// user taps the Typography tile.
 class _TypographyDetailBody extends StatelessWidget {
+  final BusinessProfile? profile;
+  const _TypographyDetailBody({this.profile});
+
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final fonts = _resolveFonts(profile);
+    final brand = _brandName(profile);
     return ListView(
       children: [
-        _TypeRow(label: 'Sora · Display',
-            sample: 'Elevate.', style: textTheme.displayMedium!),
-        const SizedBox(height: 24),
-        _TypeRow(label: 'Manrope · Body',
-            sample: 'A creative studio in your pocket.',
-            style: textTheme.bodyLarge!),
-        const SizedBox(height: 24),
-        _TypeRow(label: 'Manrope · Caption',
-            sample: 'Brand kit, ready in a minute.',
-            style: textTheme.bodyMedium!),
-        const SizedBox(height: 24),
-        _TypeRow(label: 'Sora · Eyebrow',
-            sample: 'YOUR BRAND, ELEVATED',
-            style: textTheme.labelMedium!),
+        for (final f in fonts) ...[
+          _TypeRow(
+            label: '${f.displayName} · ${f.googleFamily}',
+            sample: brand,
+            style: GoogleFonts.getFont(
+              f.googleFamily,
+              fontSize: 32,
+              color: TamivaColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            f.description,
+            style: textTheme.bodyMedium
+                ?.copyWith(color: TamivaColors.textSecondary),
+          ),
+          const SizedBox(height: 24),
+        ],
       ],
     );
   }
@@ -1799,115 +1853,6 @@ class _TypeRow extends StatelessWidget {
         const SizedBox(height: 4),
         Text(sample, style: style),
       ],
-    );
-  }
-}
-
-/// v24: A read-only row showing the user's chosen palette + font pair
-/// as small swatch dots + font name. Helps the user feel their inputs
-/// were saved and drove the generations.
-class _PreferencePreviewRow extends StatelessWidget {
-  final BusinessProfile profile;
-  const _PreferencePreviewRow({required this.profile});
-
-  @override
-  Widget build(BuildContext context) {
-    final paletteKeys = (profile.palettePreference ?? '')
-        .split(',')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-    final fontKeys = (profile.fontPreference ?? '')
-        .split(',')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (paletteKeys.isNotEmpty)
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: TamivaColors.surface,
-                border: Border.all(color: TamivaColors.divider),
-                borderRadius: BorderRadius.circular(TamivaRadii.sm),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('YOUR COLOUR PALETTE',
-                      style: Theme.of(context).textTheme.labelMedium),
-                  const SizedBox(height: 8),
-                  for (final k in paletteKeys)
-                    _PaletteSwatchRow(palette: PaletteStyles.byKey(k)),
-                ],
-              ),
-            ),
-          ),
-        if (fontKeys.isNotEmpty) ...[
-          const SizedBox(width: 12),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: TamivaColors.surface,
-                border: Border.all(color: TamivaColors.divider),
-                borderRadius: BorderRadius.circular(TamivaRadii.sm),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('YOUR TYPOGRAPHY',
-                      style: Theme.of(context).textTheme.labelMedium),
-                  const SizedBox(height: 8),
-                  for (final k in fontKeys)
-                    Text(
-                      FontPairs.byKey(k).displayName,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _PaletteSwatchRow extends StatelessWidget {
-  final PaletteStyle palette;
-  const _PaletteSwatchRow({required this.palette});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          for (final hex in palette.hexCodes)
-            Container(
-              width: 18, height: 18,
-              margin: const EdgeInsets.only(right: 4),
-              decoration: BoxDecoration(
-                color: _hexToColor(hex),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: TamivaColors.divider),
-              ),
-            ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              palette.displayName.split('(').first.trim(),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 12),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

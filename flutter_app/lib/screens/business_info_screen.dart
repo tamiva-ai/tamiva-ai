@@ -14,6 +14,7 @@ import '../widgets/exit_confirm_scope.dart';
 import '../widgets/logout_action.dart';
 import '../widgets/multi_select_sheet.dart';
 import 'brand_assets_screen.dart';
+import 'upload_assets_screen.dart';
 
 class BusinessInfoScreen extends StatefulWidget {
   final ApiClient apiClient;
@@ -268,7 +269,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       if (!mounted) return;
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => UploadAssetsPlaceholder(
+          builder: (_) => UploadAssetsScreen(
             apiClient: widget.apiClient,
             businessProfileId: profileId,
           ),

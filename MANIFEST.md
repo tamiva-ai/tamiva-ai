@@ -1,3 +1,28 @@
+# v34 — Upload flow, brand-kit personalization, lock fix (+ all of v33)
+
+Built 2026-07-13. First packaged build since v32, so it includes the v33
+work (Razorpay Pro payments, email normalization, ₹5000 price) plus the
+items below.
+
+## New in v34
+
+| Path | Fix |
+|---|---|
+| `backend/package-lock.json` | Regenerated so `razorpay@2.9.6` is in sync — fixes the Railway `npm ci` failure. |
+| `flutter_app/lib/screens/business_info_screen.dart` | New users now go **Business info → Upload assets (logo / ambassador / product / references) → Brand kit**. Was routing to a placeholder stub that skipped uploads. |
+| `flutter_app/lib/screens/brand_assets_screen.dart` | Removed the duplicate "YOUR COLOUR PALETTE / YOUR TYPOGRAPHY" row under the starter-kit line. Brand-colors section now shows the user's selected palette(s); Typography section now shows the user's **brand name in their selected font(s)** (via google_fonts). Fallbacks when no preference set. |
+
+## Still required for payments (from v33)
+Set on the Railway backend service:
+- `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (secret is server-only; regenerate the one pasted in chat).
+- `RAZORPAY_PRO_AMOUNT_PAISE` optional (default 500000 = ₹5000).
+
+## Watch on first deploy
+- Backend build: first with the `razorpay` SDK.
+- APK build: first with `razorpay_flutter` + `gal` native plugins.
+
+---
+
 # v33 — Razorpay Pro payments, email normalization, price fix
 
 Built 2026-07-13 on top of v32.
