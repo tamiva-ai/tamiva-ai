@@ -162,3 +162,5 @@ class UserFacingError {
     // "sign in" stays "sign in"; the caller already passes the base
     // verb phrase. Trim any trailing punctuation just in case.
     return operation.replaceAll(RegExp(r'[.!?]+$'), '');
+  }
+}

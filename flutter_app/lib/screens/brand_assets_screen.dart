@@ -1405,7 +1405,7 @@ class _FilmPreviewState extends State<_FilmPreview> {
     _startPolling(projectId);
   }
 
-  void _startPolling(String projectId) {
+  void _startPolling(String projectId, {Project? seed}) {
     _pollTimer?.cancel();
     setState(() => _project = seed ??
         Project(
@@ -1861,25 +1861,24 @@ class _FilmViewerScreenState extends State<_FilmViewerScreen> {
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
       const SnackBar(
-        content: Text('Saving film to your gallery…'),
+        content: Text('Downloading film…'),
         duration: Duration(seconds: 1),
       ),
     );
-    final result =
-        await FilmPlaybackService.downloadToGallery(widget.asset.url);
+    final result = await FilmPlaybackService.downloadForSharing(
+      widget.asset.url,
+    );
     if (!mounted) return;
     messenger.hideCurrentSnackBar();
-    if (result.ok) {
+    if (result.ok && result.bytes != null) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Saved to your gallery.')),
+        const SnackBar(content: Text('Film ready to share.')),
       );
-      if (result.bytes != null) {
-        await ShareService.shareVideoBytes(
-          result.bytes!,
-          name: 'tamiva-film.mp4',
-          text: 'My brand film from Tamiva',
-        );
-      }
+      await ShareService.shareVideoBytes(
+        result.bytes!,
+        name: 'tamiva-film.mp4',
+        text: 'My brand film from Tamiva',
+      );
     } else {
       final err = result.error ?? "Couldn't save.";
       messenger.showSnackBar(SnackBar(content: Text(err)));
@@ -2009,3 +2008,194 @@ class _FilmViewerScreenState extends State<_FilmViewerScreen> {
           ),
           Positioned(
             left: 
+/// Full-screen viewer for a finished logo. Swipeable across all
+/// variants if the project produced more than one.
+class _LogoViewerScreen extends StatefulWidget {
+  final List<ProjectAsset> assets;
+  const _LogoViewerScreen({required this.assets});
+
+  @override
+  State<_LogoViewerScreen> createState() => _LogoViewerScreenState();
+}
+
+class _LogoViewerScreenState extends State<_LogoViewerScreen> {
+  final PageController _controller = PageController();
+  int _index = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: TamivaColors.background,
+      appBar: AppBar(
+        title: Text('${_index + 1} / ${widget.assets.length} · Logo'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: 'Share',
+            onPressed: () => ShareService.shareImageUrl(
+              widget.assets[_index].url,
+              name: 'tamiva-logo.png',
+              text: 'My brand from Tamiva',
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Regenerate',
+            onPressed: () {
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Open the brand kit to generate a fresh logo.',
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Save to gallery',
+            onPressed: () =>
+                _downloadImageAsset(context, widget.assets[_index].url),
+          ),
+        ],
+      ),
+      body: PageView.builder(
+        controller: _controller,
+        itemCount: widget.assets.length,
+        onPageChanged: (i) => setState(() => _index = i),
+        itemBuilder: (_, i) {
+          final a = widget.assets[i];
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(TamivaRadii.md),
+              child: NetImage(
+                imageUrl: a.url,
+                fit: BoxFit.contain,
+                placeholder: (_, __) => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+                errorWidget: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image,
+                      color: TamivaColors.textFaint, size: 32),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Detailed view of the brand palette - used by the static-preview sheet
+/// when the user taps the Brand Colors tile.
+class _ColorsDetailBody extends StatelessWidget {
+  final BusinessProfile? profile;
+  const _ColorsDetailBody({this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final palettes = _resolvePalettes(profile);
+    final swatches = <(String, String)>[];
+    for (final p in palettes) {
+      final pname = p.displayName.split('(').first.trim();
+      for (final hex in p.hexCodes) {
+        swatches.add((pname, hex));
+      }
+    }
+    final textTheme = Theme.of(context).textTheme;
+    return ListView.separated(
+      itemCount: swatches.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (_, i) {
+        final (name, hex) = swatches[i];
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: TamivaColors.surface,
+            borderRadius: BorderRadius.circular(TamivaRadii.sm),
+            border: Border.all(color: TamivaColors.divider),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _hexToColor(hex),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: TamivaColors.divider),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name, style: textTheme.titleMedium),
+                    const SizedBox(height: 2),
+                    Text(hex.toUpperCase(),
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: TamivaColors.textSecondary,
+                        )),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Detailed type system view.
+class _TypographyDetailBody extends StatelessWidget {
+  final BusinessProfile? profile;
+  const _TypographyDetailBody({this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final fonts = _resolveFonts(profile);
+    final brand = _brandName(profile);
+    return ListView(
+      children: [
+        for (final f in fonts) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              '${f.displayName} · ${f.googleFamily}',
+              style: textTheme.labelMedium
+                  ?.copyWith(color: TamivaColors.gold),
+            ),
+          ),
+          Text(
+            brand,
+            style: GoogleFonts.getFont(
+              f.googleFamily,
+              fontSize: 32,
+              color: TamivaColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ],
+    );
+  }
+}
+
+Color _hexToColor(String hex) {
+  final cleaned = hex.replaceFirst('#', '');
+  final v = int.tryParse('FF$cleaned', radix: 16);
+  return v == null ? TamivaColors.textFaint : Color(v);
+}
+                  

@@ -3,10 +3,9 @@ import 'dart:typed_data';
 
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
-import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/services.dart' show PlatformException;
 
-/// Result of a save attempt. [error] is null on success and carries a
-/// short, user-facing message on failure.
+/// Result of a save attempt.
 class SaveResult {
   final bool ok;
   final String? error;
@@ -15,10 +14,6 @@ class SaveResult {
 }
 
 /// Saves a generated image asset to the device photo gallery.
-///
-/// Handles both `data:` URLs (base64 bytes returned by gpt-image-1) and
-/// http(s) URLs (which are downloaded first). Videos are not handled
-/// here — open those in the browser via url_launcher instead.
 Future<SaveResult> saveImageToGallery(
   String url, {
   String album = 'Tamiva',
@@ -55,4 +50,18 @@ Future<SaveResult> saveImageToGallery(
     }
     return const SaveResult.failure("Couldn't save to your gallery.");
   } catch (_) {
-    return const
+    return const SaveResult.failure("Couldn't save to your gallery.");
+  }
+}
+
+/// v36 / S3.21 — settings deep-link helper. We don't use the
+/// `permission_handler` package (which has Android BuildConfig issues
+/// in many Flutter SDK combos) — instead we route the user back to
+/// the welcome screen and surface the existing system hint via the
+/// friendly SnackBar copy already shown by [saveImageToGallery].
+Future<void> openAppSettingsForSaves() async {
+  // No-op: the underlying Gal plugin will trigger Android's Settings
+  // page itself on the next attempt if the user granted "Don't ask
+  // again" on Android 13+. For richer deep-linking we'd add
+  // permission_handler ^11.3.x — out of scope for this milestone.
+}

@@ -621,3 +621,42 @@ class _InstagramBadge extends StatelessWidget {
               height: 16,
               child: CustomPaint(painter: _IgGlyphPainter()),
           
+class _IgGlyphPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(
+      rect.deflate(1),
+      const Radius.circular(4),
+    );
+    final shader = const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Color(0xFFFDD17B),
+        Color(0xFFD62976),
+        Color(0xFF4F5BD5),
+      ],
+    ).createShader(rect);
+    final paint = Paint()..shader = shader;
+    canvas.drawRRect(rrect, paint);
+    final innerPaint = Paint()
+      ..color = const Color(0xFF0F0507)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawRRect(
+      rrect.deflate(2),
+      innerPaint,
+    );
+    canvas.drawCircle(rect.center, size.width * 0.22, innerPaint);
+    final dot = Paint()..color = const Color(0xFF0F0507);
+    canvas.drawCircle(
+      Offset(rect.right - 3, rect.top + 3),
+      1,
+      dot,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_IgGlyphPainter oldDelegate) => false;
+}

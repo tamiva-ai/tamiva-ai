@@ -671,4 +671,20 @@ class _Chip extends StatelessWidget {
         children: [
           Text(
             label,
-       
+           return _ChipPickerCard(
+      label: 'TYPOGRAPHY STYLE (MAX 2)',
+      emptyHint: 'Tap to pick one or two styles',
+      selected: selected,
+      onTap: onTap,
+      onRemove: onRemove,
+    );
+  }
+}
+
+/// Parses a `#RRGGBB` hex string into an opaque [Color]. Falls back to
+/// a faint colour if the string can't be parsed.
+Color _hexToColor(String hex) {
+  final cleaned = hex.replaceFirst('#', '');
+  final value = int.tryParse('FF$cleaned', radix: 16);
+  return value == null ? TamivaColors.textFaint : Color(value);
+}

@@ -322,95 +322,6 @@ extension on _AssetCategory {
         return 'Brand ambassador';
       case _AssetCategory.product:
         return 'Product photos';
-      case _AssetCategory.other:
-        return 'Other references';
-    }
-  }
-
-  int get maxPhotos {
-    switch (this) {
-      case _AssetCategory.logo:
-        return 1;
-      case _AssetCategory.ambassador:
-        return 1;
-      case _AssetCategory.product:
-        return 5;
-      case _AssetCategory.other:
-        return 2;
-    }
-  }
-
-  String get subtitle {
-    switch (this) {
-      case _AssetCategory.logo:
-        return 'If you already have one · 1 photo';
-      case _AssetCategory.ambassador:
-        return 'A clear, well-lit portrait · 1 photo';
-      case _AssetCategory.product:
-        return 'Show us what you sell · up to 5';
-      case _AssetCategory.other:
-        return 'Inspiration, mood boards · up to 2';
-    }
-  }
-
-  IconData get icon {
-    switch (this) {
-      case _AssetCategory.logo:
-        return Icons.auto_awesome_outlined;
-      case _AssetCategory.ambassador:
-        return Icons.person_outline;
-      case _AssetCategory.product:
-        return Icons.shopping_bag_outlined;
-      case _AssetCategory.other:
-        return Icons.image_outlined;
-    }
-  }
-}
-
-class _UploadCard extends StatelessWidget {
-  final _AssetCategory category;
-  final List<XFile> photos;
-  final VoidCallback onAdd;
-  final void Function(int) onRemove;
-
-  const _UploadCard({
-    required this.category,
-    required this.photos,
-    required this.onAdd,
-    required this.onRemove,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: TamivaColors.surface,
-        border: Border.all(color: TamivaColors.divider),
-        borderRadius: BorderRadius.circular(TamivaRadii.md),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0x33D4A72C),
-                  borderRadius: BorderRadius.circular(TamivaRadii.sm),
-                ),
-                child: Icon(category.icon, color: TamivaColors.gold, size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(category.title, style: textTheme.titleMedium),
-                    const SizedBox(height: 2),
                     Text(category.subtitle, style: textTheme.bodyMedium),
                   ],
                 ),
@@ -418,4 +329,85 @@ class _UploadCard extends StatelessWidget {
               Text(
                 'Optional',
                 style: textTheme.labelMedium?.copyWith(
-                  color: 
+                  color: TamivaColors.textFaint,
+                  letterSpacing: 1.2,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Photo thumbnails + "+ Add" tile
+          SizedBox(
+            height: 80,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: photos.length + (photos.length < category.maxPhotos ? 1 : 0),
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                if (i == photos.length) {
+                  return InkWell(
+                    onTap: onAdd,
+                    borderRadius: BorderRadius.circular(TamivaRadii.sm),
+                    child: Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: TamivaColors.gold.withOpacity(0.5),
+                          style: BorderStyle.solid,
+                        ),
+                        borderRadius: BorderRadius.circular(TamivaRadii.sm),
+                      ),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_photo_alternate_outlined,
+                              color: TamivaColors.gold, size: 22),
+                          SizedBox(height: 4),
+                          Text('Add',
+                              style: TextStyle(
+                                  color: TamivaColors.gold,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+                return Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(TamivaRadii.sm),
+                      child: Image.file(
+                        File(photos[i].path),
+                        width: 80,
+                        height: 80,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    Positioned(
+                      right: 2,
+                      top: 2,
+                      child: GestureDetector(
+                        onTap: () => onRemove(i),
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: const BoxDecoration(
+                            color: Colors.black87,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.close, size: 14, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
