@@ -25,4 +25,23 @@ dependencies:
   shared_preferences: ^2.3.2                    # token + draft persistence
   connectivity_plus: ^6.0.5                     # offline detection (S2.7)
   video_player: ^2.9.2                          # in-app film playback (S2.11)
-  share_plus: ^10.1.2                           # save-all/share carousel (S3.
+  share_plus: ^10.1.2                           # save-all/share carousel (S3.17)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: true
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+    - assets/hero/
+    - assets/lottie/
