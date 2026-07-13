@@ -36,6 +36,12 @@ jobs:
           if ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$MANIFEST"; then
             sed -i '/<manifest /a\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>' "$MANIFEST"
           fi
+          # v36 / S3.21 — connectivity_plus needs ACCESS_NETWORK_STATE
+          # for the offline banner; video_player reads MP4 streams over
+          # the existing INTERNET permission.
+          if ! grep -q "android.permission.ACCESS_NETWORK_STATE" "$MANIFEST"; then
+            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>' "$MANIFEST"
+          fi
           # Android 11+ package visibility - url_launcher needs to see
           # browser and app intent handlers or launchUrl() silently fails.
           if ! grep -q "<queries>" "$MANIFEST"; then
@@ -53,15 +59,4 @@ jobs:
 
       - name: Set app display name to Tamiva
         working-directory: flutter_app
-        run: |
-          sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
-
-      - name: Build APK
-        working-directory: flutter_app
-        run: flutter build apk --release
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: tamiva-app-release
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+      

@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import '../models/models.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
+
 import '../errors/user_facing_error.dart';
+import '../models/models.dart';
 import '../services/api_client.dart';
+import '../services/auth_state.dart';
 import '../theme/tamiva_theme.dart';
 import '../widgets/hero_scaffold.dart';
 import '../widgets/inline_error.dart';
@@ -44,14 +50,36 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   bool _signUpMode = false;
   UserFacingError? _error;
 
+  // v36 / S3.18 — stable per-submit idempotency key.
+  String? _signupIdempotencyKey;
+  static const _uuid = Uuid();
+
+  // v36 / S1.2 — global session-expired listener.
+  StreamSubscription<SessionEvent>? _sessionSub;
+
   @override
   void initState() {
     super.initState();
     _signUpMode = widget.startInSignUpMode;
+    _sessionSub = SessionEvents.stream.listen((evt) async {
+      if (!mounted) return;
+      if (evt is SessionExpired) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Your session ended. Please sign in again.'),
+          ),
+        );
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await AuthState(prefs).clear();
+        } catch (_) {}
+      }
+    });
   }
 
   @override
   void dispose() {
+    _sessionSub?.cancel();
     _nameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
@@ -75,6 +103,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    // v36 / S3.18 — stable idempotency key per submit attempt.
+    _signupIdempotencyKey = _uuid.v4();
     setState(() {
       _submitting = true;
       _error = null;
@@ -103,6 +133,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       phone: _formattedPhone,
       email: _emailController.text.trim(),
       password: _passwordController.text,
+      idempotencyKey: _signupIdempotencyKey,
     );
   }
 
@@ -111,8 +142,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     try {
       user = await _callSignup();
     } on ApiException catch (e) {
-      // 409 = email or phone already registered. Nudge to sign in or
-      // reset password rather than showing a raw 409 error.
       if (e.statusCode == 409) {
         await _showAlreadyRegisteredDialog(e.body);
         return;
@@ -120,6 +149,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       rethrow;
     }
     if (!mounted) return;
+    // v36 / S2.8 — persist the validated session for cold-start auto-login.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await AuthState(prefs).saveUser(user);
+      widget.apiClient.setUserId(user.id);
+    } catch (_) {}
     await _routeAfterAuth(user);
   }
 
@@ -212,6 +247,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       password: _passwordController.text,
     );
     if (!mounted) return;
+    // v36 / S2.8 — persist the validated session.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await AuthState(prefs).saveUser(user);
+      widget.apiClient.setUserId(user.id);
+    } catch (_) {}
     await _routeAfterAuth(user);
   }
 
@@ -579,57 +620,4 @@ class _InstagramBadge extends StatelessWidget {
               width: 16,
               height: 16,
               child: CustomPaint(painter: _IgGlyphPainter()),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '@tamiva.media',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: TamivaColors.textSecondary,
-                  ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _IgGlyphPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final rrect = RRect.fromRectAndRadius(
-      rect.deflate(1),
-      const Radius.circular(4),
-    );
-    final shader = const LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [
-        Color(0xFFFDD17B),
-        Color(0xFFD62976),
-        Color(0xFF4F5BD5),
-      ],
-    ).createShader(rect);
-    final paint = Paint()..shader = shader;
-    canvas.drawRRect(rrect, paint);
-    final innerPaint = Paint()
-      ..color = const Color(0xFF0F0507)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
-    canvas.drawRRect(
-      rrect.deflate(2),
-      innerPaint,
-    );
-    canvas.drawCircle(rect.center, size.width * 0.22, innerPaint);
-    final dot = Paint()..color = const Color(0xFF0F0507);
-    canvas.drawCircle(
-      Offset(rect.right - 3, rect.top + 3),
-      1,
-      dot,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_IgGlyphPainter oldDelegate) => false;
-}
+          

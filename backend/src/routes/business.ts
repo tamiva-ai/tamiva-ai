@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db/client.js";
+import { idempotency } from "../middleware/idempotency.js";
+import { getEffectiveTier } from "../util/tier.js";
 
 export const businessRouter = Router();
 
@@ -18,7 +20,10 @@ const createProfileSchema = z.object({
   fontPreference: z.string().max(100).nullable().optional(),
 });
 
-businessRouter.post("/", async (req, res) => {
+businessRouter.post(
+  "/",
+  idempotency,
+  async (req, res) => {
   const parsed = createProfileSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -46,7 +51,8 @@ businessRouter.post("/", async (req, res) => {
   });
 
   res.status(201).json(profile);
-});
+  },
+);
 
 businessRouter.get("/:id", async (req, res) => {
   const profile = await prisma.businessProfile.findUnique({
@@ -138,7 +144,8 @@ businessRouter.put("/by-user/:userId", async (req, res) => {
 
   const user = await prisma.user.findUnique({ where: { id: req.params.userId } });
   if (!user) return res.status(404).json({ error: "User not found" });
-  if (user.tier !== "pro") {
+  const effective = await getEffectiveTier(user.id);
+  if (effective.tier !== "pro") {
     return res.status(403).json({
       error: "Editing requires Tamiva Pro. Pay ₹5000 to unlock.",
     });
@@ -212,12 +219,4 @@ businessRouter.post("/:id/ambassadors", async (req, res) => {
   }
 
   const ambassador = await prisma.brandAmbassador.create({
-    data: {
-      businessProfileId: req.params.id,
-      photoUrls: parsed.data.photoUrls,
-      angleLabels: parsed.data.angleLabels ?? [],
-    },
-  });
-
-  res.status(201).json(ambassador);
-});
+  

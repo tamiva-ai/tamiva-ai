@@ -2,10 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 import '../errors/user_facing_error.dart';
 import '../services/api_client.dart';
 import '../services/asset_saver.dart';
 import '../services/payment_service.dart';
+import '../services/share_service.dart';
+import '../services/video_downloader.dart';
 import '../widgets/net_image.dart';
 import '../models/models.dart';
 import '../data/palette_styles.dart';
@@ -147,15 +150,33 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   // True while we check the backend for an existing logo on load, so we
   // don't flash the "Generate your logo" CTA before we know the state.
   bool _bootstrapping = true;
+  // v36 / S1.3 — distinct flag so a fetch failure shows a retry state
+  // instead of the misleading "no logo" CTA.
+  bool _bootstrapFailed = false;
   // True while a manual logo generation request is in flight, for the
   // CTA button's loading state.
   bool _startingLogo = false;
+
+  // v36 / S2.15 — cached tier for hiding the Upgrade CTA for Pro (S2.10).
+  String _tier = 'free';
+
+  // v36 / S1.4 — generation timeout tracking.
+  DateTime? _generationStartedAt;
+  static const Duration kMaxGenerationDuration = Duration(minutes: 6);
 
   @override
   void initState() {
     super.initState();
     _loadProfile();
     _bootstrapLogo();
+    _refreshTier();
+  }
+
+  Future<void> _refreshTier() async {
+    final refreshed = await widget.apiClient.refreshTier();
+    if (refreshed != null && mounted) {
+      setState(() => _tier = refreshed.tier);
+    }
   }
 
   /// On load, adopt any logo the user already has instead of blindly
@@ -163,6 +184,11 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   /// duplicate logos). If a logo exists we resume/show it; if it's
   /// still running we start polling; if none exists we fall through to
   /// a manual "Generate your logo" CTA and wait for the user to tap it.
+  ///
+  /// v36 / S1.3 — a fetch failure no longer falls through to the
+  /// "no logo" CTA; we now show a distinct retry state so the user
+  /// never hits the "already created your logo" 429 they couldn't
+  /// understand.
   Future<void> _bootstrapLogo() async {
     try {
       final projects = await widget.apiClient
@@ -181,10 +207,20 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
         }
         return;
       }
+      if (mounted) {
+        setState(() {
+          _bootstrapping = false;
+          _bootstrapFailed = false;
+        });
+      }
     } catch (_) {
-      // Non-fatal: fall through to the manual CTA so the user can start.
+      if (mounted) {
+        setState(() {
+          _bootstrapping = false;
+          _bootstrapFailed = true;
+        });
+      }
     }
-    if (mounted) setState(() => _bootstrapping = false);
   }
 
   Future<void> _loadProfile() async {
@@ -212,6 +248,7 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     setState(() {
       _startingLogo = true;
       _error = null;
+      _generationStartedAt = DateTime.now();
     });
     try {
       final projectId = await widget.apiClient.createLogoProject(
@@ -238,9 +275,27 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     if (_projectId == null) return;
     try {
       final project = await widget.apiClient.getProject(_projectId!);
+      if (!mounted) return;
       setState(() => _project = project);
       if (project.isReady || project.isFailed) {
         _pollTimer?.cancel();
+      } else if (project.isInProgress && _generationStartedAt != null) {
+        // v36 / S1.4 — generation timeout.
+        final age = DateTime.now().difference(_generationStartedAt!);
+        if (age > kMaxGenerationDuration) {
+          _pollTimer?.cancel();
+          if (mounted) {
+            setState(() {
+              _error = const UserFacingError(
+                title: 'Generation is taking too long',
+                message:
+                    'This usually means the studio is overloaded. '
+                    'Tap retry and we\'ll start a fresh attempt.',
+                retryLabel: 'Retry',
+              );
+            });
+          }
+        }
       }
     } catch (_) {
       // transient - retry on next tick
@@ -366,6 +421,7 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   }
 
   bool get _logoReady => _project != null && _project!.isReady && _project!.assets.isNotEmpty;
+  bool get _isPro => _tier == 'pro';
 
   @override
   Widget build(BuildContext context) {
@@ -375,15 +431,17 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
           ? 'Your brand kit'
           : 'Generating your brand…',
       actions: [LogoutAction(apiClient: widget.apiClient)],
-      bottomBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-          child: GradientCtaButton(
-            onPressed: _startProCheckout,
-            child: const Text('Upgrade to Tamiva Pro · ₹5000/mo'),
-          ),
-        ),
-      ),
+      bottomBar: _isPro
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                child: GradientCtaButton(
+                  onPressed: _startProCheckout,
+                  child: const Text('Upgrade to Tamiva Pro · ₹5000/mo'),
+                ),
+              ),
+            ),
       body: _buildBody(context),
     );
   }
@@ -409,6 +467,47 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     // we never flash the CTA and then swap it for the status board.
     if (_bootstrapping) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    // v36 / S1.3 — bootstrap fetch failed. Show a distinct retry state
+    // instead of the misleading "no logo" CTA.
+    if (_bootstrapFailed) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(28, 40, 28, 28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(Icons.cloud_off_outlined,
+                size: 44, color: TamivaColors.gold),
+            const SizedBox(height: 20),
+            Text(
+              "Couldn't reach the studio",
+              textAlign: TextAlign.center,
+              style: textTheme.titleLarge,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              "Check your connection and tap retry. We don't know whether "
+              "you already have a logo until the studio answers.",
+              textAlign: TextAlign.center,
+              style: textTheme.bodyMedium
+                  ?.copyWith(color: TamivaColors.textSecondary),
+            ),
+            const SizedBox(height: 28),
+            GradientCtaButton(
+              onPressed: () {
+                setState(() {
+                  _bootstrapFailed = false;
+                  _bootstrapping = true;
+                });
+                _bootstrapLogo();
+              },
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
     }
 
     // No logo project yet. Show an explicit "Generate your logo" CTA
@@ -949,6 +1048,28 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
   UserFacingError? _startError;
 
   @override
+  void initState() {
+    super.initState();
+    // v36 / S2.13 — adopt an in-flight carousel on re-entry.
+    _bootstrapFromExistingProject();
+  }
+
+  Future<void> _bootstrapFromExistingProject() async {
+    try {
+      final projects = await widget.apiClient
+          .getBusinessProfileProjects(widget.businessProfileId);
+      if (!mounted) return;
+      final carousel = projects.carousel;
+      if (carousel != null &&
+          (carousel.isInProgress || carousel.isFailed)) {
+        _startPolling(carousel.id, seed: carousel);
+      }
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  @override
   void dispose() {
     _pollTimer?.cancel();
     super.dispose();
@@ -968,9 +1089,10 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
     _startPolling(projectId);
   }
 
-  void _startPolling(String projectId) {
+  void _startPolling(String projectId, {Project? seed}) {
     _pollTimer?.cancel();
-    setState(() => _project = Project(
+    setState(() => _project = seed ??
+        Project(
           id: projectId,
           type: 'carousel',
           status: 'queued',
@@ -1242,6 +1364,28 @@ class _FilmPreviewState extends State<_FilmPreview> {
   UserFacingError? _startError;
 
   @override
+  void initState() {
+    super.initState();
+    // v36 / S2.13 — adopt in-flight film on re-entry.
+    _bootstrapFromExistingProject();
+  }
+
+  Future<void> _bootstrapFromExistingProject() async {
+    try {
+      final projects = await widget.apiClient
+          .getBusinessProfileProjects(widget.businessProfileId);
+      if (!mounted) return;
+      final video = projects.video;
+      if (video != null &&
+          (video.isInProgress || video.isFailed)) {
+        _startPolling(video.id, seed: video);
+      }
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  @override
   void dispose() {
     _pollTimer?.cancel();
     super.dispose();
@@ -1263,7 +1407,8 @@ class _FilmPreviewState extends State<_FilmPreview> {
 
   void _startPolling(String projectId) {
     _pollTimer?.cancel();
-    setState(() => _project = Project(
+    setState(() => _project = seed ??
+        Project(
           id: projectId,
           type: 'video',
           status: 'queued',
@@ -1553,6 +1698,7 @@ class _CarouselViewerScreen extends StatefulWidget {
 class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
   final PageController _controller = PageController();
   int _index = 0;
+  bool _savingAll = false;
 
   static const _roles = ['Hook', 'Problem', 'Vision', 'Product', 'CTA'];
 
@@ -1560,6 +1706,54 @@ class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  /// v36 / S3.17 — save every slide in parallel. Saves the user 5 taps
+  /// and gives them a single success/failure SnackBar at the end.
+  Future<void> _saveAll() async {
+    if (_savingAll) return;
+    setState(() => _savingAll = true);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Saving all slides to your gallery…'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+    final urls = widget.assets.map((a) => a.url).toList();
+    final results = await Future.wait(urls.map((u) => saveImageToGallery(u)));
+    if (!mounted) return;
+    final failed =
+        results.where((r) => !r.ok).map((r) => r.error).toList();
+    messenger.hideCurrentSnackBar();
+    if (failed.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('All slides saved to your gallery.')),
+      );
+    } else if (failed.length == urls.length) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(failed.first ?? "Couldn't save.")),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Saved ${urls.length - failed.length} of ${urls.length} slides.',
+          ),
+        ),
+      );
+    }
+    setState(() => _savingAll = false);
+  }
+
+  Future<void> _shareCurrent() async {
+    final url = widget.assets[_index].url;
+    await ShareService.shareImageUrl(
+      url,
+      name:
+          'tamiva-carousel-${_index + 1}-${_roles[_index.clamp(0, _roles.length - 1)].toLowerCase()}.png',
+      text: 'Slide ${_index + 1} of my Tamiva carousel',
+    );
   }
 
   @override
@@ -1571,6 +1765,16 @@ class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
           '${_index + 1} / ${widget.assets.length} - ${_roles[_index.clamp(0, _roles.length - 1)]}',
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: 'Share slide',
+            onPressed: _shareCurrent,
+          ),
+          IconButton(
+            icon: const Icon(Icons.save_alt_rounded),
+            tooltip: 'Save all slides',
+            onPressed: _savingAll ? null : _saveAll,
+          ),
           IconButton(
             icon: const Icon(Icons.download_rounded),
             tooltip: 'Save slide to gallery',
@@ -1607,9 +1811,92 @@ class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
   }
 }
 
-class _FilmViewerScreen extends StatelessWidget {
+class _FilmViewerScreen extends StatefulWidget {
   final ProjectAsset asset;
   const _FilmViewerScreen({required this.asset});
+
+  @override
+  State<_FilmViewerScreen> createState() => _FilmViewerScreenState();
+}
+
+class _FilmViewerScreenState extends State<_FilmViewerScreen> {
+  // v36 / S2.11 — in-app playback via video_player.
+  VideoPlayerController? _controller;
+  bool _initializing = true;
+  String? _initError;
+
+  @override
+  void initState() {
+    super.initState();
+    _initController();
+  }
+
+  Future<void> _initController() async {
+    try {
+      final c = await FilmPlaybackService.controllerFor(widget.asset.url);
+      if (!mounted) {
+        await c.dispose();
+        return;
+      }
+      setState(() {
+        _controller = c;
+        _initializing = false;
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _initializing = false;
+        _initError = "Couldn't load the film. Try opening it in a browser.";
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _downloadFilm() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Saving film to your gallery…'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+    final result =
+        await FilmPlaybackService.downloadToGallery(widget.asset.url);
+    if (!mounted) return;
+    messenger.hideCurrentSnackBar();
+    if (result.ok) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Saved to your gallery.')),
+      );
+      if (result.bytes != null) {
+        await ShareService.shareVideoBytes(
+          result.bytes!,
+          name: 'tamiva-film.mp4',
+          text: 'My brand film from Tamiva',
+        );
+      }
+    } else {
+      final err = result.error ?? "Couldn't save.";
+      messenger.showSnackBar(SnackBar(content: Text(err)));
+      if (err.toLowerCase().contains('settings')) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text('Tap to open Settings.'),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: FilmPlaybackService.openAppSettings,
+            ),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1619,9 +1906,14 @@ class _FilmViewerScreen extends StatelessWidget {
         title: const Text('Your brand film'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: 'Save film to gallery',
+            onPressed: _downloadFilm,
+          ),
+          IconButton(
             icon: const Icon(Icons.open_in_new_rounded),
-            tooltip: 'Open / download film',
-            onPressed: () => _openAssetInBrowser(context, asset.url),
+            tooltip: 'Open in browser',
+            onPressed: () => _openAssetInBrowser(context, widget.asset.url),
           ),
         ],
       ),
@@ -1633,232 +1925,87 @@ class _FilmViewerScreen extends StatelessWidget {
             Expanded(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(TamivaRadii.md),
-                child: NetImage(
-                  imageUrl: asset.url,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                  errorWidget: (_, __, ___) => const Center(
-                    child: Icon(Icons.broken_image, color: TamivaColors.textFaint, size: 32),
-                  ),
-                ),
+                child: _buildPlayer(context),
               ),
             ),
             const SizedBox(height: 16),
             Text(
-              'Tap the link below to open in your browser. (In-app video playback lands in the next milestone.)',
+              'Tap play to watch in-app, or save it to your gallery to share.',
               style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 8),
-            SelectableText(
-              asset.url,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: TamivaColors.gold,
-                    decoration: TextDecoration.underline,
-                  ),
             ),
           ],
         ),
       ),
     );
   }
-}
 
-/// Full-screen viewer for a finished logo. Swipeable across all
-/// variants if the project produced more than one (logo jobs request
-/// n=4 from OpenAI, so we typically have 4 to flip through).
-class _LogoViewerScreen extends StatefulWidget {
-  final List<ProjectAsset> assets;
-  const _LogoViewerScreen({required this.assets});
-
-  @override
-  State<_LogoViewerScreen> createState() => _LogoViewerScreenState();
-}
-
-class _LogoViewerScreenState extends State<_LogoViewerScreen> {
-  final PageController _controller = PageController();
-  int _index = 0;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: TamivaColors.background,
-      appBar: AppBar(
-        title: Text('${_index + 1} / ${widget.assets.length} · Logo'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download_rounded),
-            tooltip: 'Save to gallery',
-            onPressed: () =>
-                _downloadImageAsset(context, widget.assets[_index].url),
-          ),
-        ],
-      ),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: widget.assets.length,
-        onPageChanged: (i) => setState(() => _index = i),
-        itemBuilder: (_, i) {
-          final a = widget.assets[i];
-          return Padding(
-            padding: const EdgeInsets.all(20),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(TamivaRadii.md),
-              child: NetImage(
-                imageUrl: a.url,
-                fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-                errorWidget: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image,
-                      color: TamivaColors.textFaint, size: 32),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// Detailed view of the brand palette - used by the static-preview sheet
-/// when the user taps the Brand Colors tile.
-class _ColorsDetailBody extends StatelessWidget {
-  final BusinessProfile? profile;
-  const _ColorsDetailBody({this.profile});
-
-  @override
-  Widget build(BuildContext context) {
-    final palettes = _resolvePalettes(profile);
-    // Flatten selected palettes into (palette name, hex) rows.
-    final swatches = <(String, String)>[];
-    for (final p in palettes) {
-      final pname = p.displayName.split('(').first.trim();
-      for (final hex in p.hexCodes) {
-        swatches.add((pname, hex));
-      }
+  Widget _buildPlayer(BuildContext context) {
+    if (_initializing) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
-    final textTheme = Theme.of(context).textTheme;
-    return ListView.separated(
-      itemCount: swatches.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (_, i) {
-        final (name, hex) = swatches[i];
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: TamivaColors.surface,
-            borderRadius: BorderRadius.circular(TamivaRadii.sm),
-            border: Border.all(color: TamivaColors.divider),
-          ),
-          child: Row(
+    if (_initError != null) {
+      return ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: _hexToColor(hex),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: TamivaColors.divider),
+              const Icon(Icons.broken_image, color: TamivaColors.textFaint, size: 36),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  _initError!,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: textTheme.titleMedium),
-                    const SizedBox(height: 2),
-                    Text(hex.toUpperCase(),
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: TamivaColors.textSecondary,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        )),
-                  ],
-                ),
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () => _openAssetInBrowser(context, widget.asset.url),
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                label: const Text('Open in browser'),
               ),
             ],
           ),
-        );
-      },
-    );
-  }
-}
-
-/// Detailed type system view - used by the static-preview sheet when the
-/// user taps the Typography tile.
-class _TypographyDetailBody extends StatelessWidget {
-  final BusinessProfile? profile;
-  const _TypographyDetailBody({this.profile});
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final fonts = _resolveFonts(profile);
-    final brand = _brandName(profile);
-    return ListView(
-      children: [
-        for (final f in fonts) ...[
-          _TypeRow(
-            label: '${f.displayName} · ${f.googleFamily}',
-            sample: brand,
-            style: GoogleFonts.getFont(
-              f.googleFamily,
-              fontSize: 32,
-              color: TamivaColors.textPrimary,
+        ),
+      );
+    }
+    final c = _controller!;
+    return ColoredBox(
+      color: Colors.black,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
+              child: VideoPlayer(c),
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            f.description,
-            style: textTheme.bodyMedium
-                ?.copyWith(color: TamivaColors.textSecondary),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                c.value.isPlaying ? c.pause() : c.play();
+              });
+            },
+            child: Container(
+              color: const Color(0x33000000),
+              child: Center(
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: c.value.isPlaying ? 0 : 1,
+                  child: const Icon(
+                    Icons.play_circle_outline,
+                    color: Colors.white,
+                    size: 80,
+                  ),
+                ),
+              ),
+            ),
           ),
-          const SizedBox(height: 24),
-        ],
-      ],
-    );
-  }
-}
-
-class _TypeRow extends StatelessWidget {
-  final String label;
-  final String sample;
-  final TextStyle style;
-  const _TypeRow({
-    required this.label,
-    required this.sample,
-    required this.style,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
-                ?.copyWith(color: TamivaColors.gold)),
-        const SizedBox(height: 4),
-        Text(sample, style: style),
-      ],
-    );
-  }
-}
-
-Color _hexToColor(String hex) {
-  final cleaned = hex.replaceFirst('#', '');
-  final v = int.tryParse('FF$cleaned', radix: 16);
-  return v == null ? TamivaColors.textFaint : Color(v);
-}
+          Positioned(
+            left: 

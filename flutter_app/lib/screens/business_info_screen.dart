@@ -1,5 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
+
 import '../data/brand_tones.dart';
 import '../data/industries.dart';
 import '../data/palette_styles.dart';
@@ -7,6 +12,7 @@ import '../data/font_pairs.dart';
 import '../errors/user_facing_error.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
+import '../services/draft_store.dart';
 import '../services/payment_service.dart';
 import '../theme/tamiva_theme.dart';
 import '../widgets/hero_scaffold.dart';
@@ -62,6 +68,11 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
 
   UserFacingError? _error;
 
+  // v36 / S2.12 — draft restore + auto-save.
+  Timer? _draftSaveDebouncer;
+  // v36 / S3.18 — stable per-submit idempotency key.
+  String? _submitIdempotencyKey;
+
   @override
   void initState() {
     super.initState();
@@ -71,6 +82,56 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     } else {
       _loadExistingProfile();
     }
+    _restoreDraft();
+    _nameController.addListener(_scheduleDraftSave);
+    _taglineController.addListener(_scheduleDraftSave);
+  }
+
+  Future<void> _restoreDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final draft = DraftStore(prefs).loadBusinessInfo();
+      if (!mounted || draft.isEmpty) return;
+      _nameController.text = draft.name;
+      _taglineController.text = draft.tagline;
+      _selectedIndustries = List.of(draft.industries);
+      _selectedTones = List.of(draft.tones);
+      _selectedPalettes = List.of(draft.palettes);
+      _selectedFonts = List.of(draft.fonts);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Brought back your draft from last time.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  void _scheduleDraftSave() {
+    _draftSaveDebouncer?.cancel();
+    _draftSaveDebouncer =
+        Timer(const Duration(milliseconds: 400), _saveDraftNow);
+  }
+
+  Future<void> _saveDraftNow() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await DraftStore(prefs).saveBusinessInfo(
+        BusinessInfoDraft(
+          name: _nameController.text,
+          tagline: _taglineController.text,
+          industries: List.of(_selectedIndustries),
+          tones: List.of(_selectedTones),
+          palettes: List.of(_selectedPalettes),
+          fonts: List.of(_selectedFonts),
+        ),
+      );
+    } catch (_) {}
   }
 
   Future<void> _loadExistingProfile() async {
@@ -106,6 +167,9 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
 
   @override
   void dispose() {
+    _draftSaveDebouncer?.cancel();
+    _nameController.removeListener(_scheduleDraftSave);
+    _taglineController.removeListener(_scheduleDraftSave);
     _nameController.dispose();
     _taglineController.dispose();
     super.dispose();
@@ -125,6 +189,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     );
     if (result != null && mounted) {
       setState(() => _selectedIndustries = result);
+      _scheduleDraftSave();
     }
   }
 
@@ -142,6 +207,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     );
     if (result != null && mounted) {
       setState(() => _selectedTones = result);
+      _scheduleDraftSave();
     }
   }
 
@@ -181,6 +247,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     );
     if (result != null && mounted) {
       setState(() => _selectedPalettes = result);
+      _scheduleDraftSave();
     }
   }
 
@@ -205,13 +272,16 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     );
     if (result != null && mounted) {
       setState(() => _selectedFonts = result);
+      _scheduleDraftSave();
     }
   }
 
   Future<void> _startProCheckout() async {
     final result = await PaymentService.startProCheckout(
       api: widget.apiClient,
-      userId: widget.userId,
+      // businessProfileId is null here — server resolves user via x-user-id
+      // header (S1.6). Pass null to skip the optional businessProfile sanity
+      // check.
     );
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
@@ -259,6 +329,8 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    // v36 / S3.18 — stable idempotency key for retries within this submit.
+    _submitIdempotencyKey = const Uuid().v4();
     setState(() {
       _submitting = true;
       _error = null;
@@ -292,9 +364,16 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
           tone: _selectedTones.isEmpty ? null : _selectedTones.join(', '),
           palettePreference: _selectedPalettes.isEmpty ? null : _selectedPalettes.join(', '),
           fontPreference: _selectedFonts.isEmpty ? null : _selectedFonts.join(', '),
+          idempotencyKey: _submitIdempotencyKey,
         );
         profileId = profile.id;
       }
+
+      // v36 / S2.12 — clear the draft on successful submit.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await DraftStore(prefs).clearBusinessInfo();
+      } catch (_) {}
 
       if (!mounted) return;
       Navigator.of(context).push(
@@ -592,95 +671,4 @@ class _Chip extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(fontSize: 12, color: TamivaColors.textPrimary, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 6),
-          InkWell(
-            onTap: onRemove,
-            child: const Icon(Icons.close, size: 14, color: TamivaColors.gold),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _IndustryPicker extends StatelessWidget {
-  final List<String> selected;
-  final VoidCallback onTap;
-  final void Function(String) onRemove;
-  const _IndustryPicker({required this.selected, required this.onTap, required this.onRemove});
-
-  @override
-  Widget build(BuildContext context) {
-    return _ChipPickerCard(
-      label: 'INDUSTRY',
-      emptyHint: 'Tap to pick one or more',
-      selected: selected,
-      onTap: onTap,
-      onRemove: onRemove,
-    );
-  }
-}
-
-class _TonePicker extends StatelessWidget {
-  final List<String> selected;
-  final VoidCallback onTap;
-  final void Function(String) onRemove;
-  const _TonePicker({required this.selected, required this.onTap, required this.onRemove});
-
-  @override
-  Widget build(BuildContext context) {
-    return _ChipPickerCard(
-      label: 'BRAND TONE (MAX 2)',
-      emptyHint: 'Tap to pick one or two tones',
-      selected: selected,
-      onTap: onTap,
-      onRemove: onRemove,
-    );
-  }
-}
-
-class _PalettePicker extends StatelessWidget {
-  final List<String> selected;
-  final VoidCallback onTap;
-  final void Function(String) onRemove;
-  const _PalettePicker({required this.selected, required this.onTap, required this.onRemove});
-
-  @override
-  Widget build(BuildContext context) {
-    return _ChipPickerCard(
-      label: 'COLOUR PALETTE (MAX 2)',
-      emptyHint: 'Tap to pick one or two palettes',
-      selected: selected,
-      onTap: onTap,
-      onRemove: onRemove,
-    );
-  }
-}
-
-class _FontPicker extends StatelessWidget {
-  final List<String> selected;
-  final VoidCallback onTap;
-  final void Function(String) onRemove;
-  const _FontPicker({required this.selected, required this.onTap, required this.onRemove});
-
-  @override
-  Widget build(BuildContext context) {
-    return _ChipPickerCard(
-      label: 'TYPOGRAPHY STYLE (MAX 2)',
-      emptyHint: 'Tap to pick one or two styles',
-      selected: selected,
-      onTap: onTap,
-      onRemove: onRemove,
-    );
-  }
-}
-
-/// Parses a `#RRGGBB` hex string into an opaque [Color]. Falls back to
-/// a faint colour if the string can't be parsed.
-Color _hexToColor(String hex) {
-  final cleaned = hex.replaceFirst('#', '');
-  final value = int.tryParse('FF$cleaned', radix: 16);
-  return value == null ? TamivaColors.textFaint : Color(value);
-}
+       

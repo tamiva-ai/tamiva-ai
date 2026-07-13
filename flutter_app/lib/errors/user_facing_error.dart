@@ -114,18 +114,18 @@ class UserFacingError {
         );
       case 429:
         // Distinguish a transient rate-limit (slow down) from a hard
-        // daily cap (the backend tells us via the JSON body). The
-        // backend's /projects/* routes return
-        // {"error":"Daily limit reached","message":"..."} when the
-        // user burned their 1/day free slot.
+        // quota cap (the backend tells us via `upgradeCopy: true` in
+        // the JSON body). v36 / S2.9 — copy now matches the actual
+        // model ("1 total", not "refreshes at midnight") and surfaces
+        // an upgrade CTA at the highest-intent moment.
         final body = backendMessage ?? '';
-        final isDailyCap = body.toLowerCase().contains('daily limit');
+        final isQuotaCap = body.toLowerCase().contains("used your 1 free");
         return UserFacingError(
-          title: isDailyCap ? 'Daily limit reached' : 'Slow down',
-          message: isDailyCap
-              ? "You've used your 1 free generation for this today. Limit refreshes at midnight, or upgrade to Tamiva Pro for unlimited."
+          title: isQuotaCap ? 'Free generation used' : 'Slow down',
+          message: isQuotaCap
+              ? "You've used your 1 free generation for this. Upgrade to Tamiva Pro for unlimited."
               : "You're going a bit fast. Give it a moment and try again.",
-          retryLabel: isDailyCap ? 'Upgrade to Pro' : 'Try again',
+          retryLabel: isQuotaCap ? 'Upgrade to Pro' : 'Try again',
         );
       case 500:
       case 502:
@@ -162,5 +162,3 @@ class UserFacingError {
     // "sign in" stays "sign in"; the caller already passes the base
     // verb phrase. Trim any trailing punctuation just in case.
     return operation.replaceAll(RegExp(r'[.!?]+$'), '');
-  }
-}

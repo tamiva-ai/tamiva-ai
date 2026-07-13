@@ -1,82 +1,158 @@
+import 'dart:async';
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:mime/mime.dart';
 import 'package:http_parser/http_parser.dart';
+import 'package:uuid/uuid.dart';
+
 import '../models/models.dart';
 
-/// Talks to the Tamiva backend. Point [baseUrl] at your deployed API -
-/// during local development this is typically http://10.0.2.2:4000
-/// (Android emulator's alias for the host machine's localhost).
+/// Talks to the Tamiva backend. Point [baseUrl] at your deployed API.
+///
+/// v36 changes:
+///   - All mutating endpoints attach an `Idempotency-Key` header
+///     (S3.18).
+///   - Auth is via `x-user-id` header (S1.6).
+///   - A global session event bus (`SessionEvents.bus`) lets any
+///     widget react to a forced sign-out (S1.2).
+///   - New `/auth/me` (S2.8) and `/payments/status` (S1.1 self-heal)
+///     endpoints.
 class ApiClient {
   final String baseUrl;
   final http.Client _http;
 
-  /// Timeout for normal HTTP calls (auth, create project, status polls).
   static const _kShortTimeout = Duration(seconds: 15);
-
-  /// Timeout for long polls (status checks while a generation is in
-  /// flight). Generations can take 60-90s, so the poll itself can
-  /// legitimately be slow.
   static const _kLongTimeout = Duration(minutes: 5);
+  static const _kUploadTimeout = Duration(minutes: 2);
+
+  String? _userId;
+  String? get currentUserId => _userId;
+
+  void setUserId(String? id) {
+    _userId = id;
+  }
+
+  static final _uuid = const Uuid();
+
+  Map<String, String> _baseHeaders({String? idempotencyKey}) {
+    final h = <String, String>{'Content-Type': 'application/json'};
+    if (_userId != null) h['x-user-id'] = _userId!;
+    if (idempotencyKey != null) h['Idempotency-Key'] = idempotencyKey;
+    return h;
+  }
+
+  String _newIdempotencyKey([String? hint]) {
+    return hint ?? _uuid.v4();
+  }
 
   ApiClient({required this.baseUrl, http.Client? httpClient})
-      : _http = httpClient ?? http.Client();
+    : _http = httpClient ?? http.Client();
 
-  Future<http.Response> _post(Uri url, {Object? body, Map<String, String>? headers}) {
-    return _http.post(url, headers: headers, body: body).timeout(_kShortTimeout);
-  }
-
-  Future<http.Response> _get(Uri url, {Map<String, String>? headers}) {
-    return _http.get(url, headers: headers).timeout(_kShortTimeout);
-  }
-
-  Future<http.StreamedResponse> _send(http.BaseRequest request) {
-    return _http.send(request).timeout(_kLongTimeout);
-  }
-
-  /// Returns true if the phone was auto-verified because OTP is currently
-  /// disabled on the backend (see OTP_DISABLED on the API service) - in
-  /// that case the caller can skip showing the code-entry sheet.
   Future<bool> sendOtp(String phone) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/auth/otp/send'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({'phone': phone}),
-    );
-    _throwIfError(res);
+    ).timeout(_kShortTimeout);
+    _throwIfError(res, allowAnonymous: true);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return body['otpDisabled'] == true;
   }
 
   Future<void> verifyOtp({required String phone, required String code}) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/auth/otp/verify'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({'phone': phone, 'code': code}),
-    );
-    _throwIfError(res);
+    ).timeout(_kShortTimeout);
+    _throwIfError(res, allowAnonymous: true);
   }
 
-  /// Returns the User record (now includes tier + tierUpdatedAt).
-  /// Use this instead of the older signup that returned userId only.
   Future<User> signup({
     required String fullName,
     required String phone,
     required String email,
     required String password,
+    String? idempotencyKey,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/auth/signup'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
       body: jsonEncode({
         'fullName': fullName,
         'phone': phone,
         'email': email,
         'password': password,
       }),
-    );
-    _throwIfError(res);
+    ).timeout(_kShortTimeout);
+    _throwIfError(res, allowAnonymous: true);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
+    return _userFromAuthBody(body, email: email, phone: phone);
+  }
+
+  Future<User> login({required String email, required String password}) async {
+    final res = await _http.post(
+      Uri.parse('$baseUrl/auth/login'),
+      headers: _baseHeaders(),
+      body: jsonEncode({'email': email, 'password': password}),
+    ).timeout(_kShortTimeout);
+    _throwIfError(res, allowAnonymous: true);
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    return _userFromAuthBody(body, email: email);
+  }
+
+  Future<User?> fetchMe() async {
+    if (_userId == null) return null;
+    try {
+      final res = await _http.get(
+        Uri.parse('$baseUrl/auth/me'),
+        headers: _baseHeaders(),
+      ).timeout(_kShortTimeout);
+      if (res.statusCode == 401 || res.statusCode == 404) {
+        return null;
+      }
+      _throwIfError(res);
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return _userFromAuthBody(body, email: body['email'] as String? ?? '');
+    } on TimeoutException {
+      return null;
+    } on ApiException {
+      return null;
+    }
+  }
+
+  Future<User?> refreshTier() async {
+    if (_userId == null) return null;
+    try {
+      final res = await _http.get(
+        Uri.parse('$baseUrl/payments/status'),
+        headers: _baseHeaders(),
+      ).timeout(_kShortTimeout);
+      _throwIfError(res);
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final tier = body['tier'] as String? ?? 'free';
+      return User(
+        id: _userId!,
+        email: '',
+        tier: tier,
+        tierUpdatedAt: body['tierUpdatedAt'] is String
+            ? DateTime.tryParse(body['tierUpdatedAt'] as String)
+            : null,
+        tierExpiresAt: body['tierExpiresAt'] is String
+            ? DateTime.tryParse(body['tierExpiresAt'] as String)
+            : null,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  User _userFromAuthBody(
+    Map<String, dynamic> body, {
+    required String email,
+    String? phone,
+  }) {
     return User(
       id: body['userId'] as String,
       email: email,
@@ -86,37 +162,18 @@ class ApiClient {
       tierUpdatedAt: body['tierUpdatedAt'] is String
           ? DateTime.tryParse(body['tierUpdatedAt'] as String)
           : null,
-    );
-  }
-
-  Future<User> login({required String email, required String password}) async {
-    final res = await _post(
-      Uri.parse('$baseUrl/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
-    );
-    _throwIfError(res);
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
-    return User(
-      id: body['userId'] as String,
-      email: email,
-      fullName: body['fullName'] as String?,
-      tier: body['tier'] as String? ?? 'free',
-      tierUpdatedAt: body['tierUpdatedAt'] is String
-          ? DateTime.tryParse(body['tierUpdatedAt'] as String)
+      tierExpiresAt: body['tierExpiresAt'] is String
+          ? DateTime.tryParse(body['tierExpiresAt'] as String)
           : null,
     );
   }
 
-  /// Mock payment confirmation. Sets user.tier='pro' and returns the
-  /// updated user. In v24 this is a no-op endpoint that the admin
-  /// can also call directly via /admin/users/:userId/tier.
   Future<User> upgradeToPro({required String userId}) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/auth/upgrade/$userId'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({}),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return User(
@@ -127,24 +184,23 @@ class ApiClient {
       tierUpdatedAt: body['tierUpdatedAt'] is String
           ? DateTime.tryParse(body['tierUpdatedAt'] as String)
           : null,
+      tierExpiresAt: body['tierExpiresAt'] is String
+          ? DateTime.tryParse(body['tierExpiresAt'] as String)
+          : null,
     );
   }
 
-  /// Creates a Razorpay order for Tamiva Pro. Pass whichever identifier
-  /// the calling screen has — the backend resolves the user and returns
-  /// the (public) key id plus the resolved userId for verification.
   Future<RazorpayOrder> createRazorpayOrder({
-    String? userId,
     String? businessProfileId,
+    String? idempotencyKey,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/payments/order'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
       body: jsonEncode({
-        if (userId != null) 'userId': userId,
         if (businessProfileId != null) 'businessProfileId': businessProfileId,
       }),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return RazorpayOrder(
@@ -156,67 +212,51 @@ class ApiClient {
     );
   }
 
-  /// Verifies a completed Razorpay payment server-side (HMAC signature).
-  /// On success the backend flips the user to Pro; returns the new tier.
   Future<String> verifyRazorpayPayment({
-    required String userId,
     required String orderId,
     required String paymentId,
     required String signature,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/payments/verify'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({
-        'userId': userId,
         'razorpay_order_id': orderId,
         'razorpay_payment_id': paymentId,
         'razorpay_signature': signature,
       }),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return body['tier'] as String? ?? 'pro';
   }
 
-  /// Kicks off a password reset - sends a 6-digit code to the user's
-  /// email if the account exists.
   Future<void> forgotPassword({required String email}) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/auth/forgot-password'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({'email': email}),
-    );
-    _throwIfError(res);
+    ).timeout(_kShortTimeout);
+    _throwIfError(res, allowAnonymous: true);
   }
 
-  /// Resets password; returns the new user record (which the app can
-  /// use to auto-sign-in).
   Future<User> resetPassword({
     required String email,
     required String code,
     required String newPassword,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/auth/reset-password'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({
         'email': email,
         'code': code,
         'newPassword': newPassword,
       }),
-    );
-    _throwIfError(res);
+    ).timeout(_kShortTimeout);
+    _throwIfError(res, allowAnonymous: true);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
-    return User(
-      id: body['userId'] as String,
-      email: email,
-      fullName: body['fullName'] as String?,
-      tier: body['tier'] as String? ?? 'free',
-      tierUpdatedAt: body['tierUpdatedAt'] is String
-          ? DateTime.tryParse(body['tierUpdatedAt'] as String)
-          : null,
-    );
+    return _userFromAuthBody(body, email: email);
   }
 
   Future<BusinessProfile> createBusinessProfile({
@@ -225,15 +265,15 @@ class ApiClient {
     required String industry,
     String? tagline,
     String? tone,
-    // v24: CSV keys for palette + font preferences.
     String? palettePreference,
     String? fontPreference,
     List<String>? brandColors,
     String? targetAudience,
+    String? idempotencyKey,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/business-profiles'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
       body: jsonEncode({
         'userId': userId,
         'name': name,
@@ -245,13 +285,11 @@ class ApiClient {
         if (brandColors != null) 'brandColors': brandColors,
         if (targetAudience != null) 'targetAudience': targetAudience,
       }),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     return BusinessProfile.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
-  /// v24: Pro users only. Replaces the business profile text + photos
-  /// and triggers a new regeneration cycle. Returns the updated profile.
   Future<BusinessProfile> updateBusinessProfile({
     required String userId,
     required String name,
@@ -265,7 +303,7 @@ class ApiClient {
   }) async {
     final res = await _http.put(
       Uri.parse('$baseUrl/business-profiles/by-user/$userId'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({
         'name': name,
         'industry': industry,
@@ -282,16 +320,14 @@ class ApiClient {
     return BusinessProfile.fromJson(body['profile'] as Map<String, dynamic>);
   }
 
-  /// v24: kicks off the bulk regeneration. Returns a map of project
-  /// ids per type so the status board can subscribe.
   Future<Map<String, List<String>>> bulkGenerate({
     required String businessProfileId,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/projects/bulk'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({'businessProfileId': businessProfileId}),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     final ids = body['projectIds'] as Map<String, dynamic>;
@@ -302,9 +338,12 @@ class ApiClient {
     };
   }
 
-  /// Uploads a single photo file and returns its public URL.
-  Future<String> uploadPhoto(String filePath) async {
-    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/uploads'));
+  Future<String> uploadPhoto(String filePath, {int? sizeBytes}) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/uploads'),
+    );
+    if (_userId != null) request.headers['x-user-id'] = _userId!;
 
     final mimeType = lookupMimeType(filePath) ?? 'image/jpeg';
     final parts = mimeType.split('/');
@@ -315,7 +354,7 @@ class ApiClient {
       contentType: MediaType(parts[0], parts.length > 1 ? parts[1] : 'jpeg'),
     ));
 
-    final streamed = await _send(request);
+    final streamed = await _http.send(request).timeout(_kUploadTimeout);
     final res = await http.Response.fromStream(streamed);
     _throwIfError(res);
     return (jsonDecode(res.body) as Map<String, dynamic>)['url'] as String;
@@ -326,67 +365,66 @@ class ApiClient {
     required List<String> photoUrls,
     List<String>? angleLabels,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/business-profiles/$businessProfileId/ambassadors'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(),
       body: jsonEncode({
         'photoUrls': photoUrls,
         if (angleLabels != null) 'angleLabels': angleLabels,
       }),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
   }
 
-  /// Kicks off logo generation. Returns the new project id; poll
-  /// [getProject] until status is "ready".
   Future<String> createLogoProject({
     required String businessProfileId,
     required String stylePrompt,
+    String? idempotencyKey,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/projects/logo'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
       body: jsonEncode({
         'businessProfileId': businessProfileId,
         'stylePrompt': stylePrompt,
       }),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     return (jsonDecode(res.body) as Map<String, dynamic>)['projectId'] as String;
   }
 
-  /// Kicks off a 5-slide Brand Story carousel render.
   Future<String> createCarouselProject({
     required String businessProfileId,
     String? topic,
     int slideCount = 5,
+    String? idempotencyKey,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/projects/carousel'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
       body: jsonEncode({
         'businessProfileId': businessProfileId,
         'topic': topic,
         'slideCount': slideCount,
       }),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     return (jsonDecode(res.body) as Map<String, dynamic>)['projectId'] as String;
   }
 
-  /// Kicks off a 10-second brand film render.
   Future<CreateVideoResult> createVideoProject({
     required String businessProfileId,
     String tier = 'draft',
+    String? idempotencyKey,
   }) async {
-    final res = await _post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/projects/video'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
       body: jsonEncode({
         'businessProfileId': businessProfileId,
         'tier': tier,
       }),
-    );
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return CreateVideoResult(
@@ -396,20 +434,20 @@ class ApiClient {
     );
   }
 
-  /// Returns the business profile by id, or throws on 404. Used by
-  /// the brand-assets screen to read palette/font preferences.
   Future<BusinessProfile> getBusinessProfileById(String businessProfileId) async {
-    final res = await _get(
+    final res = await _http.get(
       Uri.parse('$baseUrl/business-profiles/$businessProfileId'),
-    );
+      headers: _baseHeaders(),
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     return BusinessProfile.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
   Future<BusinessProfile?> getBusinessProfileByUser(String userId) async {
-    final res = await _get(
+    final res = await _http.get(
       Uri.parse('$baseUrl/business-profiles/by-user/$userId'),
-    );
+      headers: _baseHeaders(),
+    ).timeout(_kShortTimeout);
     if (res.statusCode == 404) return null;
     _throwIfError(res);
     return BusinessProfile.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
@@ -418,9 +456,10 @@ class ApiClient {
   Future<BusinessProfileProjects> getBusinessProfileProjects(
     String businessProfileId,
   ) async {
-    final res = await _get(
+    final res = await _http.get(
       Uri.parse('$baseUrl/business-profiles/$businessProfileId/projects'),
-    );
+      headers: _baseHeaders(),
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     final projects = body['projects'] as Map<String, dynamic>;
@@ -439,9 +478,10 @@ class ApiClient {
   Future<List<BusinessProfileProjectSummary>> getBusinessProfileHistory(
     String businessProfileId,
   ) async {
-    final res = await _get(
+    final res = await _http.get(
       Uri.parse('$baseUrl/business-profiles/$businessProfileId/projects/all'),
-    );
+      headers: _baseHeaders(),
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     final list = (body['projects'] as List<dynamic>)
@@ -452,13 +492,23 @@ class ApiClient {
   }
 
   Future<Project> getProject(String projectId) async {
-    final res = await _get(Uri.parse('$baseUrl/projects/$projectId'));
+    final res = await _http.get(
+      Uri.parse('$baseUrl/projects/$projectId'),
+      headers: _baseHeaders(),
+    ).timeout(_kShortTimeout);
     _throwIfError(res);
     return Project.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
-  void _throwIfError(http.Response res) {
+  void _throwIfError(http.Response res, {bool allowAnonymous = false}) {
     if (res.statusCode >= 400) {
+      if (!allowAnonymous &&
+          (res.statusCode == 401 || res.statusCode == 403)) {
+        if (_userId != null) {
+          _userId = null;
+          SessionEvents.emit(const SessionExpired());
+        }
+      }
       throw ApiException(res.statusCode, res.body);
     }
   }
@@ -469,11 +519,41 @@ class ApiException implements Exception {
   final String body;
   ApiException(this.statusCode, this.body);
 
+  bool get isUpgradeableQuota {
+    if (statusCode != 429) return false;
+    try {
+      final j = jsonDecode(body);
+      return j is Map && j['upgradeCopy'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   @override
   String toString() => 'ApiException($statusCode): $body';
 }
 
-/// What /projects/video returns. Lets the UI show an ETA pill.
+/// v36 / S1.2 — Session event bus.
+class SessionEvents {
+  static final _bus = _Bus();
+  static Stream<SessionEvent> get stream => _bus.stream;
+  static void emit(SessionEvent e) => _bus.add(e);
+}
+
+class _Bus {
+  final _ctrl = StreamController<SessionEvent>.broadcast();
+  Stream<SessionEvent> get stream => _ctrl.stream;
+  void add(SessionEvent e) => _ctrl.add(e);
+}
+
+sealed class SessionEvent {
+  const SessionEvent();
+}
+
+class SessionExpired extends SessionEvent {
+  const SessionExpired();
+}
+
 class CreateVideoResult {
   final String projectId;
   final int estimatedDurationSeconds;
@@ -563,10 +643,6 @@ class BusinessProfileJobSummary {
   }
 }
 
-/// A Razorpay order created by the backend, ready to hand to the
-/// razorpay_flutter checkout sheet. [keyId] is the public key id; the
-/// secret stays on the server. [userId] is the backend-resolved user to
-/// verify the payment against.
 class RazorpayOrder {
   final String orderId;
   final int amount; // in paise

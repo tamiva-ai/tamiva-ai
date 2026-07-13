@@ -56,17 +56,16 @@ model User {
   passwordHash   String?
   phoneVerified  Boolean  @default(false)
   authProvider   String   @default("email")
-  creditsBalance Int      @default(0)
-  // v24: tier system. Free users get 1 of each artifact forever; Pro
-  // is unlocked by the PUT /business-profiles/by-user/:id endpoint
-  // (called after a mock payment). tierUpdatedAt is bumped each time
-  // a Pro user starts a new regeneration cycle, so the worker can
-  // tell when a cycle completes and lock the user back to free.
+  // v36: removed creditsBalance — tier (free|pro) is the single source of
+  // truth for entitlement. tierExpiresAt drives automatic downgrade so
+  // monthly Pro actually lapses (was S2.15).
   tier          String   @default("free")
   tierUpdatedAt DateTime?
+  tierExpiresAt DateTime?
   createdAt      DateTime @default(now())
 
   businessProfiles BusinessProfile[]
+  paymentOrders    PaymentOrder[]
 }
 
 model BusinessProfile {
@@ -80,11 +79,6 @@ model BusinessProfile {
   brandColors     Json?
   targetAudience  String?
   logoStylePrefs  Json?
-  // v24: two new CSV-string inputs that drive the prompts for all
-  // three deliverables. Max 2 selections each, taken from fixed lists
-  // (Warm/Cool/Monochrome/Earthy/Pastel/Vibrant palettes and
-  // Modern default/Editorial/Tech-forward/Elegant serif/Utility/Bold
-  // display font pairs).
   palettePreference String?
   fontPreference    String?
   createdAt       DateTime @default(now())
@@ -147,3 +141,12 @@ model Asset {
   overlayData Json?
   createdAt   DateTime  @default(now())
 }
+
+// ---------------------------------------------------------------------
+// v36: Payment reconciliation (S1.1). Each Razorpay order we create
+// lives here. Both the webhook and the client /verify call upsert on
+// providerOrderId so duplicate webhook deliveries + the client verify
+// call never double-grant Pro.
+// ---------------------------------------------------------------------
+enum PaymentOrderStatus {
+  cr

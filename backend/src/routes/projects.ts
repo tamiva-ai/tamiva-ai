@@ -18,11 +18,13 @@ import {
   type BusinessContext,
   type ReferenceBundle,
 } from "../prompts/index.js";
+import { idempotency } from "../middleware/idempotency.js";
+import { getEffectiveTier } from "../util/tier.js";
 
 export const projectsRouter = Router();
 
 /**
- * Pulls all uploaded reference photos for a business profile, then
+ * Loads uploaded reference photos for a business profile and
  * categorizes them by their angleLabel prefix ("Logo 1", "Ambassador 1",
  * "Product N", "Other N") so the prompt builder can address each type
  * independently.
@@ -62,24 +64,36 @@ function contextFromProfile(profile: {
 }
 
 /**
- * v24: tier gating. Returns 429 if a Free user tries to generate
- * another artifact of a type they already have a ready Project for.
- * Tier reads from the linked BusinessProfile.user record.
+ * v36 / S2.9 — free quota now produces copy that matches the model:
+ *   "You've used your 1 free <type>. Upgrade for unlimited." instead
+ *   of the stale "refreshes at midnight" line. Tier reads from the
+ *   effective (post-expiry-downgrade) user tier so the message is
+ *   honest even right after lapse.
  */
-async function enforceFreeQuota(businessProfileId: string, type: "logo" | "carousel" | "video") {
+async function enforceFreeQuota(
+  businessProfileId: string,
+  type: "logo" | "carousel" | "video",
+): Promise<
+  | { allowed: true }
+  | { allowed: false; status: 429 | 404; message: string; upgradeCopy: boolean }
+> {
   const profile = await prisma.businessProfile.findUnique({
     where: { id: businessProfileId },
-    include: { user: { select: { tier: true } } },
+    include: { user: { select: { id: true, tier: true } } },
   });
-  if (!profile) return { allowed: false, status: 404 as const, message: "Business profile not found" };
+  if (!profile)
+    return {
+      allowed: false,
+      status: 404,
+      message: "Business profile not found",
+      upgradeCopy: false,
+    };
 
-  if (profile.user.tier === "pro") return { allowed: true as const };
+  // Reconcile tier first so an expired Pro user gets free-tier copy.
+  const effective = await getEffectiveTier(profile.user.id);
+  if (effective.tier === "pro") return { allowed: true };
 
-  // Free path: count Projects already in flight OR finished for this
-  // type. Counting queued/generating (not just ready) closes the race
-  // where a second request slips through while the first is still
-  // processing and spawns duplicate generations. A "failed" project is
-  // deliberately excluded so the user can retry after a failure.
+  // Count Projects already in flight OR finished for this type.
   const activeCount = await prisma.project.count({
     where: {
       businessProfileId,
@@ -88,15 +102,21 @@ async function enforceFreeQuota(businessProfileId: string, type: "logo" | "carou
     },
   });
   if (activeCount >= 1) {
-    const label = type === "logo" ? "logo" : type === "carousel" ? "carousel" : "brand film";
+    const label =
+      type === "logo"
+        ? "logo"
+        : type === "carousel"
+        ? "carousel"
+        : "brand film";
     return {
-      allowed: false as const,
-      status: 429 as const,
-      message: `You've already created your ${label}. Upgrade to Tamiva Pro to create more.`,
+      allowed: false,
+      status: 429,
+      message: `You've used your 1 free ${label}. Upgrade to Tamiva Pro for unlimited.`,
+      upgradeCopy: true,
     };
   }
 
-  return { allowed: true as const };
+  return { allowed: true };
 }
 
 // ---------------------------------------------------------------------
@@ -108,59 +128,67 @@ const createLogoProjectSchema = z.object({
   stylePrompt: z.string().min(1),
 });
 
-projectsRouter.post("/logo", async (req, res) => {
-  const parsed = createLogoProjectSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+projectsRouter.post(
+  "/logo",
+  idempotency,
+  async (req, res) => {
+    const parsed = createLogoProjectSchema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
 
-  const profile = await prisma.businessProfile.findUnique({
-    where: { id: parsed.data.businessProfileId },
-  });
-  if (!profile) return res.status(404).json({ error: "Business profile not found" });
+    const profile = await prisma.businessProfile.findUnique({
+      where: { id: parsed.data.businessProfileId },
+    });
+    if (!profile)
+      return res
+        .status(404)
+        .json({ error: "Business profile not found" });
 
-  const gate = await enforceFreeQuota(parsed.data.businessProfileId, "logo");
-  if (!gate.allowed) return res.status(gate.status).json({ error: gate.message });
+    const gate = await enforceFreeQuota(parsed.data.businessProfileId, "logo");
+    if (!gate.allowed) {
+      return res
+        .status(gate.status)
+        .json({ error: gate.message, upgradeCopy: gate.upgradeCopy });
+    }
 
-  const refs = await loadReferences(profile.id);
-  const ctx = contextFromProfile(profile);
+    const refs = await loadReferences(profile.id);
+    const ctx = contextFromProfile(profile);
 
-  // Free user always gets Concept 5 (modern abstract). Pro per-call picks
-  // a concept index — for v25 the user doesn't pick; the worker just
-  // uses the next concept based on how many logos they've generated.
-  const conceptIndex = pickCarouselCampaignForFreeTier === undefined
-    ? 5
-    : LOGO_CONCEPTS[LOGO_CONCEPTS.length - 1].index; // safe default
-  const prompt = buildLogoPrompt(ctx, refs, conceptIndex);
+    const conceptIndex =
+      LOGO_CONCEPTS[LOGO_CONCEPTS.length - 1].index;
+    const prompt = buildLogoPrompt(ctx, refs, conceptIndex);
 
-  const project = await prisma.project.create({
-    data: {
-      businessProfileId: profile.id,
-      type: "logo",
-      status: "queued",
-    },
-  });
-
-  await prisma.generationJob.create({
-    data: {
-      projectId: project.id,
-      stage: "hero_image",
-      provider: "gpt_image",
-      status: "queued",
-      inputPayload: {
-        prompt,
-        conceptIndex,
-        refCount: refs.logoUrl ? 1 : 0,
+    const project = await prisma.project.create({
+      data: {
+        businessProfileId: profile.id,
+        type: "logo",
+        status: "queued",
       },
-    },
-  });
+    });
 
-  await enqueueLogoJob({
-    projectId: project.id,
-    prompt,
-    referenceImageUrls: refs.logoUrl ? [refs.logoUrl] : [],
-  });
+    await prisma.generationJob.create({
+      data: {
+        projectId: project.id,
+        stage: "hero_image",
+        provider: "gpt_image",
+        status: "queued",
+        inputPayload: {
+          prompt,
+          conceptIndex,
+          refCount: refs.logoUrl ? 1 : 0,
+        },
+      },
+    });
 
-  res.status(202).json({ projectId: project.id, status: "queued" });
-});
+    await enqueueLogoJob({
+      projectId: project.id,
+      prompt,
+      referenceImageUrls: refs.logoUrl ? [refs.logoUrl] : [],
+    });
+
+    res.status(202).json({ projectId: project.id, status: "queued" });
+  },
+);
 
 // ---------------------------------------------------------------------
 // CAROUSEL
@@ -168,73 +196,87 @@ projectsRouter.post("/logo", async (req, res) => {
 
 const createCarouselProjectSchema = z.object({
   businessProfileId: z.string().uuid(),
-  // Free user gets 1 slide (Campaign 5's first slide). Pro tier gets
-  // 5 slides per Project.
   slideCount: z.number().int().min(1).max(30).default(5),
   topic: z.string().min(1).optional(),
 });
 
-projectsRouter.post("/carousel", async (req, res) => {
-  const parsed = createCarouselProjectSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+projectsRouter.post(
+  "/carousel",
+  idempotency,
+  async (req, res) => {
+    const parsed = createCarouselProjectSchema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
 
-  const profile = await prisma.businessProfile.findUnique({
-    where: { id: parsed.data.businessProfileId },
-  });
-  if (!profile) return res.status(404).json({ error: "Business profile not found" });
+    const profile = await prisma.businessProfile.findUnique({
+      where: { id: parsed.data.businessProfileId },
+    });
+    if (!profile)
+      return res
+        .status(404)
+        .json({ error: "Business profile not found" });
 
-  const gate = await enforceFreeQuota(parsed.data.businessProfileId, "carousel");
-  if (!gate.allowed) return res.status(gate.status).json({ error: gate.message });
+    const gate = await enforceFreeQuota(
+      parsed.data.businessProfileId,
+      "carousel",
+    );
+    if (!gate.allowed) {
+      return res
+        .status(gate.status)
+        .json({ error: gate.message, upgradeCopy: gate.upgradeCopy });
+    }
 
-  const refs = await loadReferences(profile.id);
-  const ctx = contextFromProfile(profile);
+    const refs = await loadReferences(profile.id);
+    const ctx = contextFromProfile(profile);
 
-  const profileWithTier = await prisma.businessProfile.findUnique({
-    where: { id: profile.id },
-    include: { user: { select: { tier: true } } },
-  });
-  const isPro = profileWithTier?.user.tier === "pro";
+    const profileWithTier = await prisma.businessProfile.findUnique({
+      where: { id: profile.id },
+      include: { user: { select: { id: true, tier: true } } },
+    });
+    const effective = await getEffectiveTier(profileWithTier!.user.id);
+    const isPro = effective.tier === "pro";
 
-  // Free: 1 Project, Campaign 5, Slide 1 only.
-  // Pro: caller chooses slideCount (defaults to 5).
-  const campaignIndex = isPro ? undefined : pickCarouselCampaignForFreeTier();
-  const effectiveSlideCount = isPro ? parsed.data.slideCount : 1;
+    const campaignIndex = isPro ? undefined : pickCarouselCampaignForFreeTier();
+    const effectiveSlideCount = isPro ? parsed.data.slideCount : 1;
 
-  const slides = Array.from({ length: effectiveSlideCount }, (_, i) =>
-    buildCarouselSlidePrompt(ctx, refs, campaignIndex ?? 1, i + 1)
-  );
+    const slides = Array.from(
+      { length: effectiveSlideCount },
+      (_, i) =>
+        buildCarouselSlidePrompt(ctx, refs, campaignIndex ?? 1, i + 1),
+    );
 
-  const project = await prisma.project.create({
-    data: {
-      businessProfileId: profile.id,
-      type: "carousel",
-      status: "queued",
-    },
-  });
-
-  await prisma.generationJob.create({
-    data: {
-      projectId: project.id,
-      stage: "copy_generation",
-      provider: "gpt_image",
-      status: "queued",
-      inputPayload: {
-        slideCount: effectiveSlideCount,
-        campaignIndex,
+    const project = await prisma.project.create({
+      data: {
+        businessProfileId: profile.id,
+        type: "carousel",
+        status: "queued",
       },
-    },
-  });
+    });
 
-  await enqueueCarouselJob({
-    projectId: project.id,
-    slidePrompts: slides,
-    // Each slide gets no reference (we don't yet have per-slide refs in v24;
-    // refs flow through the prompt preamble as natural assets).
-    slideReferenceImageUrls: slides.map(() => refs.ambassadorUrl ? [refs.ambassadorUrl] : []),
-  });
+    await prisma.generationJob.create({
+      data: {
+        projectId: project.id,
+        stage: "copy_generation",
+        provider: "gpt_image",
+        status: "queued",
+        inputPayload: {
+          slideCount: effectiveSlideCount,
+          campaignIndex,
+        },
+      },
+    });
 
-  res.status(202).json({ projectId: project.id, status: "queued" });
-});
+    await enqueueCarouselJob({
+      projectId: project.id,
+      slidePrompts: slides,
+      slideReferenceImageUrls: slides.map(() =>
+        refs.ambassadorUrl ? [refs.ambassadorUrl] : [],
+      ),
+    });
+
+    res.status(202).json({ projectId: project.id, status: "queued" });
+  },
+);
 
 // ---------------------------------------------------------------------
 // VIDEO
@@ -245,100 +287,103 @@ const createVideoProjectSchema = z.object({
   tier: z.enum(["draft", "final"]).default("draft"),
 });
 
-projectsRouter.post("/video", async (req, res) => {
-  const parsed = createVideoProjectSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+projectsRouter.post(
+  "/video",
+  idempotency,
+  async (req, res) => {
+    const parsed = createVideoProjectSchema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
 
-  const profile = await prisma.businessProfile.findUnique({
-    where: { id: parsed.data.businessProfileId },
-  });
-  if (!profile) return res.status(404).json({ error: "Business profile not found" });
+    const profile = await prisma.businessProfile.findUnique({
+      where: { id: parsed.data.businessProfileId },
+    });
+    if (!profile)
+      return res
+        .status(404)
+        .json({ error: "Business profile not found" });
 
-  const gate = await enforceFreeQuota(parsed.data.businessProfileId, "video");
-  if (!gate.allowed) return res.status(gate.status).json({ error: gate.message });
+    const gate = await enforceFreeQuota(
+      parsed.data.businessProfileId,
+      "video",
+    );
+    if (!gate.allowed) {
+      return res
+        .status(gate.status)
+        .json({ error: gate.message, upgradeCopy: gate.upgradeCopy });
+    }
 
-  const refs = await loadReferences(profile.id);
-  const ctx = contextFromProfile(profile);
+    const refs = await loadReferences(profile.id);
+    const ctx = contextFromProfile(profile);
 
-  const profileWithTier = await prisma.businessProfile.findUnique({
-    where: { id: profile.id },
-    include: { user: { select: { tier: true } } },
-  });
-  const isPro = profileWithTier?.user.tier === "pro";
+    const profileWithTier = await prisma.businessProfile.findUnique({
+      where: { id: profile.id },
+      include: { user: { select: { id: true, tier: true } } },
+    });
+    const effective = await getEffectiveTier(profileWithTier!.user.id);
+    const isPro = effective.tier === "pro";
 
-  // Free: 1 Project, Concept 5 only. Pro per-call defaults to Concept 1
-  // (the worker will rotate for subsequent calls).
-  const conceptIndex = isPro ? 1 : pickFilmConceptForFreeTier();
-  const prompt = buildFilmPrompt(ctx, refs, conceptIndex);
+    const conceptIndex = isPro ? 1 : pickFilmConceptForFreeTier();
+    const prompt = buildFilmPrompt(ctx, refs, conceptIndex);
 
-  const project = await prisma.project.create({
-    data: {
-      businessProfileId: profile.id,
-      type: "video",
-      status: "queued",
-    },
-  });
+    const project = await prisma.project.create({
+      data: {
+        businessProfileId: profile.id,
+        type: "video",
+        status: "queued",
+      },
+    });
 
-  await prisma.generationJob.create({
-    data: {
+    await prisma.generationJob.create({
+      data: {
+        projectId: project.id,
+        stage: "render",
+        provider:
+          parsed.data.tier === "final" ? "veo_3_1" : "omni_flash",
+        status: "queued",
+        inputPayload: {
+          prompt,
+          conceptIndex,
+          tier: parsed.data.tier,
+          durationSeconds: 10,
+        },
+      },
+    });
+
+    await enqueueVideoStage({
       projectId: project.id,
       stage: "render",
-      provider: parsed.data.tier === "final" ? "veo_3_1" : "omni_flash",
+      prompt,
+      referenceImageUrls: refs.ambassadorUrl ? [refs.ambassadorUrl] : [],
+      tier: parsed.data.tier,
+    });
+
+    res.status(202).json({
+      projectId: project.id,
       status: "queued",
-      inputPayload: {
-        prompt,
-        conceptIndex,
-        tier: parsed.data.tier,
-        durationSeconds: 10,
-      },
-    },
-  });
-
-  await enqueueVideoStage({
-    projectId: project.id,
-    stage: "render",
-    prompt,
-    referenceImageUrls: refs.ambassadorUrl ? [refs.ambassadorUrl] : [],
-    tier: parsed.data.tier,
-  });
-
-  res.status(202).json({
-    projectId: project.id,
-    status: "queued",
-    conceptIndex,
-  });
-});
+      conceptIndex,
+    });
+  },
+);
 
 // ---------------------------------------------------------------------
-// v24: BULK GENERATION (Pro only)
+// BULK GENERATION (Pro only)
 // ---------------------------------------------------------------------
 
-/**
- * POST /projects/bulk
- *
- * Called after a Pro user pays ₹5000 and edits their business profile.
- * Creates 5 logo Projects + 10 carousel Projects + 5 film Projects in
- * one transaction. Sequential per batch (logos, then carousels, then
- * films) so we don't hammer OpenAI. Returns the new project IDs so the
- * status board can subscribe immediately.
- *
- * Body:
- *   businessProfileId: string
- *
- * Returns 200:
- *   { projectIds: { logo: [5], carousel: [10], video: [5] } }
- */
 projectsRouter.post("/bulk", async (req, res) => {
   const schema = z.object({ businessProfileId: z.string().uuid() });
   const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
 
   const profile = await prisma.businessProfile.findUnique({
     where: { id: parsed.data.businessProfileId },
-    include: { user: { select: { tier: true } } },
+    include: { user: { select: { id: true, tier: true } } },
   });
-  if (!profile) return res.status(404).json({ error: "Business profile not found" });
-  if (profile.user.tier !== "pro") {
+  if (!profile)
+    return res.status(404).json({ error: "Business profile not found" });
+  const effective = await getEffectiveTier(profile.user.id);
+  if (effective.tier !== "pro") {
     return res.status(403).json({
       error: "Bulk generation requires Tamiva Pro. Pay ₹5000 to unlock.",
     });
@@ -347,20 +392,12 @@ projectsRouter.post("/bulk", async (req, res) => {
   const refs = await loadReferences(profile.id);
   const ctx = contextFromProfile(profile);
 
-  // 5 logos + 10 carousels + 5 films = 20 Projects total.
-  // Concept distribution (deterministic per the Q2 decision):
-  //   5 logos (one per concept index 1..5)
-  //   10 carousels (5 concepts x 2 campaigns per concept — but we only
-  //      have 5 campaigns, so 2 carousels per campaign across campaigns
-  //      1..5)
-  //   5 films (one per concept index 1..5)
-  const projectIds: { logo: string[]; carousel: string[]; video: string[] } = {
-    logo: [],
-    carousel: [],
-    video: [],
-  };
+  const projectIds: {
+    logo: string[];
+    carousel: string[];
+    video: string[];
+  } = { logo: [], carousel: [], video: [] };
 
-  // 5 logo projects, one per concept
   for (let conceptIndex = 1; conceptIndex <= 5; conceptIndex++) {
     const project = await prisma.project.create({
       data: { businessProfileId: profile.id, type: "logo", status: "queued" },
@@ -383,15 +420,17 @@ projectsRouter.post("/bulk", async (req, res) => {
     projectIds.logo.push(project.id);
   }
 
-  // 10 carousel projects: 2 per campaign (campaign 1 x 2, campaign 2 x 2, ...)
-  // Each Project = 5 sequential slide calls.
   for (let campaignIndex = 1; campaignIndex <= 5; campaignIndex++) {
     for (let dup = 0; dup < 2; dup++) {
       const project = await prisma.project.create({
-        data: { businessProfileId: profile.id, type: "carousel", status: "queued" },
+        data: {
+          businessProfileId: profile.id,
+          type: "carousel",
+          status: "queued",
+        },
       });
       const slidePrompts = CAROUSEL_SLIDES.map((s) =>
-        buildCarouselSlidePrompt(ctx, refs, campaignIndex, s.position)
+        buildCarouselSlidePrompt(ctx, refs, campaignIndex, s.position),
       );
       await prisma.generationJob.create({
         data: {
@@ -405,13 +444,14 @@ projectsRouter.post("/bulk", async (req, res) => {
       await enqueueCarouselJob({
         projectId: project.id,
         slidePrompts,
-        slideReferenceImageUrls: slidePrompts.map(() => refs.ambassadorUrl ? [refs.ambassadorUrl] : []),
+        slideReferenceImageUrls: slidePrompts.map(() =>
+          refs.ambassadorUrl ? [refs.ambassadorUrl] : [],
+        ),
       });
       projectIds.carousel.push(project.id);
     }
   }
 
-  // 5 film projects, one per concept
   for (let conceptIndex = 1; conceptIndex <= 5; conceptIndex++) {
     const project = await prisma.project.create({
       data: { businessProfileId: profile.id, type: "video", status: "queued" },
@@ -423,7 +463,12 @@ projectsRouter.post("/bulk", async (req, res) => {
         stage: "render",
         provider: "omni_flash",
         status: "queued",
-        inputPayload: { prompt, conceptIndex, tier: "draft", durationSeconds: 10 },
+        inputPayload: {
+          prompt,
+          conceptIndex,
+          tier: "draft",
+          durationSeconds: 10,
+        },
       },
     });
     await enqueueVideoStage({
@@ -435,11 +480,6 @@ projectsRouter.post("/bulk", async (req, res) => {
     });
     projectIds.video.push(project.id);
   }
-
-  // Don't auto-flip tier here - the PUT /business-profiles/by-user/:id
-  // endpoint already flips it to 'free' on edit. We just record the
-  // current regeneration cycle's start in tierUpdatedAt so the worker
-  // can verify ordering.
 
   res.status(202).json({ projectIds });
 });
@@ -455,4 +495,4 @@ projectsRouter.get("/:id", async (req, res) => {
   });
   if (!project) return res.status(404).json({ error: "Not found" });
   res.json(project);
-});
+});                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   

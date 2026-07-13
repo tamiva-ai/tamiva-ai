@@ -59,10 +59,13 @@ class User {
   final String email;
   final String? fullName;
   final String? phone;
-  // v24: tier system. Server returns the current tier so the app can
-  // branch UI without trusting local state.
+  // v36: tier system. Server returns the current tier so the app can
+  // branch UI without trusting local state. tierExpiresAt is the
+  // server-authoritative Pro expiration — used by the client only to
+  // decide whether to re-query /payments/status.
   final String tier; // 'free' | 'pro'
   final DateTime? tierUpdatedAt;
+  final DateTime? tierExpiresAt;
 
   User({
     required this.id,
@@ -71,6 +74,7 @@ class User {
     this.phone,
     this.tier = 'free',
     this.tierUpdatedAt,
+    this.tierExpiresAt,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -83,8 +87,13 @@ class User {
       tierUpdatedAt: json['tierUpdatedAt'] is String
           ? DateTime.tryParse(json['tierUpdatedAt'] as String)
           : null,
+      tierExpiresAt: json['tierExpiresAt'] is String
+          ? DateTime.tryParse(json['tierExpiresAt'] as String)
+          : null,
     );
   }
+
+  bool get isPro => tier == 'pro';
 }
 
 class Project {

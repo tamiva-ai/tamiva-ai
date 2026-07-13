@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
+import 'package:permission_handler/permission_handler.dart';
 
 /// Result of a save attempt. [error] is null on success and carries a
 /// short, user-facing message on failure.
@@ -54,6 +55,4 @@ Future<SaveResult> saveImageToGallery(
     }
     return const SaveResult.failure("Couldn't save to your gallery.");
   } catch (_) {
-    return const SaveResult.failure("Couldn't save to your gallery.");
-  }
-}
+    return const

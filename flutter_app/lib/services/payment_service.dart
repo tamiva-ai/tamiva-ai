@@ -33,19 +33,26 @@ class ProCheckoutResult {
 ///
 /// Flow: create order (backend) -> open Razorpay sheet -> on success,
 /// verify the signature server-side (which flips the user to Pro).
+///
+/// v36 / S1.1: when the verify call fails after Razorpay already
+/// charged the card, we re-query /payments/status so a webhook that
+/// ran in the meantime resolves the user to Pro without manual
+/// intervention. Previously the user saw "verification failed,
+/// contact support" even though the webhook would have reconciled
+/// them.
 class PaymentService {
   static Future<ProCheckoutResult> startProCheckout({
     required ApiClient api,
-    String? userId,
     String? businessProfileId,
+    String? idempotencyKey,
     String contactEmail = '',
     String contactPhone = '',
   }) async {
     final RazorpayOrder order;
     try {
       order = await api.createRazorpayOrder(
-        userId: userId,
         businessProfileId: businessProfileId,
+        idempotencyKey: idempotencyKey,
       );
     } catch (e) {
       // Surface the real backend reason (e.g. "Payments aren't set up
@@ -66,15 +73,25 @@ class PaymentService {
         (PaymentSuccessResponse resp) async {
       try {
         final tier = await api.verifyRazorpayPayment(
-          userId: order.userId,
           orderId: resp.orderId ?? order.orderId,
           paymentId: resp.paymentId ?? '',
           signature: resp.signature ?? '',
         );
         finish(ProCheckoutResult.success(tier));
       } catch (_) {
+        // Verify call failed but Razorpay already charged the card.
+        // The webhook will reconcile within seconds; tell the user
+        // we'll upgrade them shortly and refresh their tier.
+        try {
+          final refreshed = await api.refreshTier();
+          if (refreshed?.tier == 'pro') {
+            finish(ProCheckoutResult.success('pro'));
+            return;
+          }
+        } catch (_) {}
         finish(ProCheckoutResult.failure(
-          'Payment received but verification failed. Please contact support.',
+          'Payment received. Your Pro upgrade is being confirmed — '
+          'this usually takes a few seconds. Try again in a moment.',
         ));
       }
     });

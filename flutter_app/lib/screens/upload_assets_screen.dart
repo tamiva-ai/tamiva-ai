@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -101,25 +102,51 @@ class _UploadAssetsScreenState extends State<UploadAssetsScreen> {
 
     try {
       if (!skip && _hasAnyPhotos) {
-        // Upload every photo, then send URLs + labels to the backend so
-        // it can associate them with this business profile.
-        final urls = <String>[];
+        // v36 / S2.14 — per-file upload with retry. Each file is
+        // uploaded independently with a 2-attempt retry on transient
+        // failures; per-file status is tracked so one bad photo no
+        // longer fails the whole batch.
+        final uploadedUrls = <String>[];
         final labels = <String>[];
+        final failed = <String>[];
 
         for (final category in _photos.keys) {
           for (var i = 0; i < _photos[category]!.length; i++) {
             final photo = _photos[category]![i];
-            final url = await widget.apiClient.uploadPhoto(photo.path);
-            urls.add(url);
-            labels.add('${category.label} ${i + 1}');
+            final label = '${category.label} ${i + 1}';
+            final valid = await _validatePhotoFile(photo.path);
+            if (valid != null) {
+              failed.add('$label: $valid');
+              continue;
+            }
+            try {
+              final url = await _uploadWithRetry(photo.path);
+              uploadedUrls.add(url);
+              labels.add(label);
+            } catch (e) {
+              failed.add('$label: ${_uploadErrorMessage(e)}');
+            }
           }
         }
 
-        if (urls.isNotEmpty) {
+        if (uploadedUrls.isNotEmpty) {
           await widget.apiClient.addAmbassadorPhotos(
             businessProfileId: widget.businessProfileId,
-            photoUrls: urls,
+            photoUrls: uploadedUrls,
             angleLabels: labels,
+          );
+        }
+
+        if (failed.isNotEmpty && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                failed.length == 1
+                    ? failed.first
+                    : '${failed.length} photos failed. The others were uploaded — you can retry the failed ones later.',
+              ),
+              duration: const Duration(seconds: 4),
+            ),
           );
         }
       }
@@ -138,6 +165,68 @@ class _UploadAssetsScreenState extends State<UploadAssetsScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// v36 / S3.19 — client-side validation. Returns null on success or
+  /// a short, user-facing message on rejection.
+  Future<String?> _validatePhotoFile(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return 'File missing.';
+      final size = await file.length();
+      if (size == 0) return 'That file is empty.';
+      if (size > 12 * 1024 * 1024) {
+        return 'File is too large (max 12 MB).';
+      }
+      final ext = path.toLowerCase();
+      if (ext.endsWith('.heic') || ext.endsWith('.heif')) {
+        return 'HEIC not supported. Convert to JPG or PNG.';
+      }
+      if (ext.endsWith('.pdf') ||
+          ext.endsWith('.doc') ||
+          ext.endsWith('.docx') ||
+          ext.endsWith('.txt')) {
+        return 'Documents aren\'t supported. Pick a JPG or PNG.';
+      }
+      return null;
+    } catch (_) {
+      return 'That file couldn\'t be read.';
+    }
+  }
+
+  /// v36 / S2.14 — upload with retry. Two attempts total; transient
+  /// failures retry once. 4xx validation surfaces immediately.
+  Future<String> _uploadWithRetry(String path) async {
+    const maxAttempts = 2;
+    Object? lastError;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await widget.apiClient.uploadPhoto(path);
+      } catch (e) {
+        lastError = e;
+        if (!_isTransient(e) || attempt == maxAttempts) rethrow;
+        await Future.delayed(Duration(milliseconds: 400 * attempt));
+      }
+    }
+    throw lastError ?? Exception('Upload failed.');
+  }
+
+  bool _isTransient(Object error) {
+    if (error is ApiException) {
+      return error.statusCode >= 500 || error.statusCode == 408;
+    }
+    return error.toString().toLowerCase().contains('timeout') ||
+        error.toString().toLowerCase().contains('socket');
+  }
+
+  String _uploadErrorMessage(Object error) {
+    if (error is ApiException) {
+      try {
+        final j = jsonDecode(error.body);
+        if (j is Map && j['error'] is String) return j['error'] as String;
+      } catch (_) {}
+    }
+    return "Couldn't upload that photo.";
   }
 
   @override
@@ -329,85 +418,4 @@ class _UploadCard extends StatelessWidget {
               Text(
                 'Optional',
                 style: textTheme.labelMedium?.copyWith(
-                  color: TamivaColors.textFaint,
-                  letterSpacing: 1.2,
-                  fontSize: 10,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          // Photo thumbnails + "+ Add" tile
-          SizedBox(
-            height: 80,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: photos.length + (photos.length < category.maxPhotos ? 1 : 0),
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (context, i) {
-                if (i == photos.length) {
-                  return InkWell(
-                    onTap: onAdd,
-                    borderRadius: BorderRadius.circular(TamivaRadii.sm),
-                    child: Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: TamivaColors.gold.withOpacity(0.5),
-                          style: BorderStyle.solid,
-                        ),
-                        borderRadius: BorderRadius.circular(TamivaRadii.sm),
-                      ),
-                      child: const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.add_photo_alternate_outlined,
-                              color: TamivaColors.gold, size: 22),
-                          SizedBox(height: 4),
-                          Text('Add',
-                              style: TextStyle(
-                                  color: TamivaColors.gold,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-                return Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(TamivaRadii.sm),
-                      child: Image.file(
-                        File(photos[i].path),
-                        width: 80,
-                        height: 80,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    Positioned(
-                      right: 2,
-                      top: 2,
-                      child: GestureDetector(
-                        onTap: () => onRemove(i),
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: const BoxDecoration(
-                            color: Colors.black87,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.close, size: 14, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+                  color: 
