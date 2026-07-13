@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../data/brand_tones.dart';
 import '../data/industries.dart';
 import '../data/palette_styles.dart';
@@ -154,6 +155,28 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
         options: PaletteStyles.all.map((p) => p.displayName).toList(),
         selected: _selectedPalettes,
         maxSelection: 2,
+        optionLeadingBuilder: (option) {
+          final palette = PaletteStyles.all.firstWhere(
+            (p) => p.displayName == option,
+            orElse: () => PaletteStyles.warm,
+          );
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final hex in palette.hexCodes)
+                Container(
+                  width: 22,
+                  height: 22,
+                  margin: const EdgeInsets.only(right: 4),
+                  decoration: BoxDecoration(
+                    color: _hexToColor(hex),
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: TamivaColors.divider),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
     if (result != null && mounted) {
@@ -171,6 +194,13 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
         options: FontPairs.all.map((p) => p.displayName).toList(),
         selected: _selectedFonts,
         maxSelection: 2,
+        optionTextStyleBuilder: (option) {
+          final pair = FontPairs.all.firstWhere(
+            (p) => p.displayName == option,
+            orElse: () => FontPairs.modernDefault,
+          );
+          return GoogleFonts.getFont(pair.googleFamily, fontSize: 20);
+        },
       ),
     );
     if (result != null && mounted) {
@@ -645,4 +675,12 @@ class _FontPicker extends StatelessWidget {
       onRemove: onRemove,
     );
   }
+}
+
+/// Parses a `#RRGGBB` hex string into an opaque [Color]. Falls back to
+/// a faint colour if the string can't be parsed.
+Color _hexToColor(String hex) {
+  final cleaned = hex.replaceFirst('#', '');
+  final value = int.tryParse('FF$cleaned', radix: 16);
+  return value == null ? TamivaColors.textFaint : Color(value);
 }

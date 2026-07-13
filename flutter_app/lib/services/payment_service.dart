@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
@@ -46,8 +47,11 @@ class PaymentService {
         userId: userId,
         businessProfileId: businessProfileId,
       );
-    } catch (_) {
-      return ProCheckoutResult.failure("Couldn't start checkout. Try again.");
+    } catch (e) {
+      // Surface the real backend reason (e.g. "Payments aren't set up
+      // yet", a Razorpay validation message, "User not found", or
+      // "You're already on Tamiva Pro") instead of a blanket failure.
+      return ProCheckoutResult.failure(_checkoutError(e));
     }
 
     final completer = Completer<ProCheckoutResult>();
@@ -98,4 +102,20 @@ class PaymentService {
 
     return completer.future;
   }
+}
+
+/// Pulls the backend's `{"error": "..."}` message out of an
+/// [ApiException] so checkout failures show the real reason (payments
+/// not configured, a Razorpay validation error, already-Pro, etc.).
+String _checkoutError(Object error) {
+  if (error is ApiException) {
+    try {
+      final decoded = jsonDecode(error.body);
+      if (decoded is Map && decoded['error'] is String) {
+        final msg = (decoded['error'] as String).trim();
+        if (msg.isNotEmpty && msg.length < 200) return msg;
+      }
+    } catch (_) {}
+  }
+  return "Couldn't start checkout. Try again.";
 }

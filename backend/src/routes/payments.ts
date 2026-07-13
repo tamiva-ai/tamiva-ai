@@ -75,7 +75,10 @@ paymentsRouter.post("/order", async (req, res) => {
     const order = await razorpay!.orders.create({
       amount: PRO_AMOUNT_PAISE,
       currency: "INR",
-      receipt: `pro_${user.id}_${Date.now()}`,
+      // Razorpay caps receipt at 40 chars. A UUID alone is 36, so we
+      // keep the receipt short (timestamp-based) and carry the userId
+      // in notes instead.
+      receipt: `pro_${Date.now()}`,
       notes: { userId: user.id, plan: "tamiva_pro_monthly" },
     });
 
@@ -88,7 +91,17 @@ paymentsRouter.post("/order", async (req, res) => {
     });
   } catch (err) {
     console.error("[payments/order] error:", err);
-    return res.status(502).json({ error: "Couldn't start checkout. Try again." });
+    // Surface the Razorpay reason (e.g. auth/receipt errors) so the app
+    // can show something actionable instead of a generic failure.
+    const anyErr = err as {
+      error?: { description?: string };
+      message?: string;
+    };
+    const detail =
+      anyErr?.error?.description ||
+      anyErr?.message ||
+      "Couldn't start checkout. Try again.";
+    return res.status(502).json({ error: detail });
   }
 });
 

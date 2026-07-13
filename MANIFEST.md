@@ -1,3 +1,28 @@
+# v35 — App icon, palette/font pickers, checkout fix
+
+Built 2026-07-13 on top of v34.
+
+## New in v35
+
+| Path | Fix |
+|---|---|
+| `flutter_app/assets/icon/app_icon.png` | New Tamiva icon (gold lotus + flame on black). White padding removed → full black square. |
+| `flutter_app/assets/icon/app_icon_foreground.png` | Gold lotus isolated on transparent, padded to the adaptive safe zone. |
+| `flutter_app/pubspec.yaml` | Adaptive icon enabled: `adaptive_icon_background: #000000` + lotus foreground. (CI already runs `dart run flutter_launcher_icons`.) |
+| `flutter_app/lib/widgets/multi_select_sheet.dart` | Added optional per-option leading widget + text style builders. |
+| `flutter_app/lib/screens/business_info_screen.dart` | Palette picker shows real colour swatches; font picker renders each option in its actual typeface (google_fonts). |
+| `backend/src/routes/payments.ts` | **Checkout fix:** Razorpay receipt was `pro_{uuid}_{ts}` (~54 chars) — over Razorpay's 40-char limit, so orders failed. Shortened to `pro_{ts}`; userId kept in notes. Also surfaces the real Razorpay error. |
+| `flutter_app/lib/services/payment_service.dart` | Surfaces the real backend error on checkout failure instead of a generic message. |
+
+## Still required for payments
+Railway backend env: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (regenerate the one shared in chat), optional `RAZORPAY_PRO_AMOUNT_PAISE`.
+
+## Watch on first deploy
+- APK build runs `flutter_launcher_icons` after `flutter create` — new icon applies automatically.
+- Backend build: `razorpay` SDK. APK: `razorpay_flutter` + `gal` native plugins.
+
+---
+
 # v34 — Upload flow, brand-kit personalization, lock fix (+ all of v33)
 
 Built 2026-07-13. First packaged build since v32, so it includes the v33

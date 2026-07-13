@@ -15,6 +15,14 @@ class MultiSelectSheet extends StatefulWidget {
   final List<String> selected;
   final int? maxSelection;
 
+  /// Optional leading widget per option (e.g. colour swatches for a
+  /// palette picker). Rendered between the checkbox and the label.
+  final Widget Function(String option)? optionLeadingBuilder;
+
+  /// Optional text style per option (e.g. the actual font family for a
+  /// typography picker). Merged onto the base label style.
+  final TextStyle? Function(String option)? optionTextStyleBuilder;
+
   const MultiSelectSheet({
     super.key,
     required this.title,
@@ -22,6 +30,8 @@ class MultiSelectSheet extends StatefulWidget {
     this.selected = const [],
     this.searchHint = 'Search…',
     this.maxSelection,
+    this.optionLeadingBuilder,
+    this.optionTextStyleBuilder,
   });
 
   @override
@@ -161,6 +171,17 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
                         itemBuilder: (context, index) {
                           final option = _filteredOptions[index];
                           final checked = _selected.contains(option);
+                          final leading =
+                              widget.optionLeadingBuilder?.call(option);
+                          final customStyle =
+                              widget.optionTextStyleBuilder?.call(option);
+                          final baseStyle = textTheme.bodyLarge?.copyWith(
+                            color: checked
+                                ? TamivaColors.textPrimary
+                                : TamivaColors.textSecondary,
+                            fontWeight:
+                                checked ? FontWeight.w600 : FontWeight.w400,
+                          );
                           return InkWell(
                             onTap: () {
                               setState(() {
@@ -198,17 +219,18 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
                                         : TamivaColors.textFaint,
                                   ),
                                   const SizedBox(width: 14),
+                                  if (leading != null) ...[
+                                    leading,
+                                    const SizedBox(width: 14),
+                                  ],
                                   Expanded(
                                     child: Text(
                                       option,
-                                      style: textTheme.bodyLarge?.copyWith(
-                                        color: checked
-                                            ? TamivaColors.textPrimary
-                                            : TamivaColors.textSecondary,
-                                        fontWeight: checked
-                                            ? FontWeight.w600
-                                            : FontWeight.w400,
-                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: customStyle == null
+                                          ? baseStyle
+                                          : baseStyle?.merge(customStyle),
                                     ),
                                   ),
                                 ],
