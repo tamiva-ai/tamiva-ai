@@ -149,4 +149,64 @@ model Asset {
 // call never double-grant Pro.
 // ---------------------------------------------------------------------
 enum PaymentOrderStatus {
-  cr
+  created
+  paid
+  failed
+  expired
+}
+
+model PaymentOrder {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  providerOrderId   String   @unique
+  provider          String   @default("razorpay")
+  amountPaise       Int
+  currency          String   @default("INR")
+  status            PaymentOrderStatus @default(created)
+  providerPaymentId String?
+  verifiedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------
+// v36: Idempotency keys (S3.18). Clients attach Idempotency-Key to
+// mutating requests and we cache the response keyed by (userId, key).
+// Safe to retry on network drops without creating duplicate rows
+// (signup, business profile, payments).
+// ---------------------------------------------------------------------
+model IdempotencyKey {
+  id         String   @id @default(uuid())
+  userId     String
+  key        String
+  method     String
+  path       String
+  statusCode Int
+  response   Json
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, key])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------
+// v36: Password reset codes (S1.5). Live in the DB (not in-memory) so
+// they survive backend redeploys on Railway. TTL via expiresAt; cooldown
+// via createdAt; attempts tracked; consumed flag so a successful reset
+// can never be replayed.
+// ---------------------------------------------------------------------
+model PasswordResetCode {
+  id         String   @id @default(uuid())
+  email      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int      @default(0)
+  consumed   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
+}
