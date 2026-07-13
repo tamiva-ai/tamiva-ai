@@ -46,7 +46,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   console.error(err);
   res.status(500).json({ error: err.message ?? "Internal server error" });
 });
-
 const port = process.env.PORT ?? 4000;
 app.listen(port, () => {
   console.log(`Tamiva backend listening on port ${port}`);
