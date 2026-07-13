@@ -219,4 +219,12 @@ businessRouter.post("/:id/ambassadors", async (req, res) => {
   }
 
   const ambassador = await prisma.brandAmbassador.create({
-  
+      data: {
+      businessProfileId: req.params.id,
+      photoUrls: parsed.data.photoUrls,
+      angleLabels: parsed.data.angleLabels ?? [],
+    },
+  });
+
+  res.status(201).json(ambassador);
+});
