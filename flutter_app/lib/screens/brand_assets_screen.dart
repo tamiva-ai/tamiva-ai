@@ -2007,7 +2007,26 @@ class _FilmViewerScreenState extends State<_FilmViewerScreen> {
             ),
           ),
           Positioned(
-            left: 
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: VideoProgressIndicator(
+              c,
+              allowScrubbing: true,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              colors: const VideoProgressColors(
+                playedColor: TamivaColors.gold,
+                bufferedColor: Color(0x55D4A72C),
+                backgroundColor: Color(0x33FFFFFF),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Full-screen viewer for a finished logo. Swipeable across all
 /// variants if the project produced more than one.
 class _LogoViewerScreen extends StatefulWidget {
@@ -2198,4 +2217,3 @@ Color _hexToColor(String hex) {
   final v = int.tryParse('FF$cleaned', radix: 16);
   return v == null ? TamivaColors.textFaint : Color(v);
 }
-                  

@@ -77,7 +77,6 @@ class _BootstrapInner extends StatefulWidget {
 
 class _BootstrapInnerState extends State<_BootstrapInner> {
   Widget? _screen;
-  bool _resolved = false;
 
   @override
   void initState() {
@@ -95,7 +94,6 @@ class _BootstrapInnerState extends State<_BootstrapInner> {
       if (!mounted) return;
       setState(() {
         _screen = WelcomeScreen(apiClient: widget.apiClient);
-        _resolved = true;
       });
       return;
     }
@@ -104,6 +102,7 @@ class _BootstrapInnerState extends State<_BootstrapInner> {
 
     final me = await widget.apiClient.fetchMe();
     final tierSnapshot = await widget.apiClient.refreshTier();
+    // me is nullable, so we cast to User? via local promotion.
     User? effectiveUser = me;
     if (effectiveUser != null && tierSnapshot != null) {
       effectiveUser = User(
@@ -150,7 +149,6 @@ class _BootstrapInnerState extends State<_BootstrapInner> {
     if (!mounted) return;
     setState(() {
       _screen = next;
-      _resolved = true;
     });
   }
 

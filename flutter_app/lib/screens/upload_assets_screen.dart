@@ -1,5 +1,5 @@
-import 'dart:convert';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../errors/user_facing_error.dart';
@@ -226,7 +226,7 @@ class _UploadAssetsScreenState extends State<UploadAssetsScreen> {
         if (j is Map && j['error'] is String) return j['error'] as String;
       } catch (_) {}
     }
-    return "Couldn't upload that photo.";
+    return "Couldn\'t upload that photo.";
   }
 
   @override
@@ -322,6 +322,95 @@ extension on _AssetCategory {
         return 'Brand ambassador';
       case _AssetCategory.product:
         return 'Product photos';
+      case _AssetCategory.other:
+        return 'Other references';
+    }
+  }
+
+  int get maxPhotos {
+    switch (this) {
+      case _AssetCategory.logo:
+        return 1;
+      case _AssetCategory.ambassador:
+        return 1;
+      case _AssetCategory.product:
+        return 5;
+      case _AssetCategory.other:
+        return 2;
+    }
+  }
+
+  String get subtitle {
+    switch (this) {
+      case _AssetCategory.logo:
+        return 'If you already have one · 1 photo';
+      case _AssetCategory.ambassador:
+        return 'A clear, well-lit portrait · 1 photo';
+      case _AssetCategory.product:
+        return 'Show us what you sell · up to 5';
+      case _AssetCategory.other:
+        return 'Inspiration, mood boards · up to 2';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case _AssetCategory.logo:
+        return Icons.auto_awesome_outlined;
+      case _AssetCategory.ambassador:
+        return Icons.person_outline;
+      case _AssetCategory.product:
+        return Icons.shopping_bag_outlined;
+      case _AssetCategory.other:
+        return Icons.image_outlined;
+    }
+  }
+}
+
+class _UploadCard extends StatelessWidget {
+  final _AssetCategory category;
+  final List<XFile> photos;
+  final VoidCallback onAdd;
+  final void Function(int) onRemove;
+
+  const _UploadCard({
+    required this.category,
+    required this.photos,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: TamivaColors.surface,
+        border: Border.all(color: TamivaColors.divider),
+        borderRadius: BorderRadius.circular(TamivaRadii.md),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0x33D4A72C),
+                  borderRadius: BorderRadius.circular(TamivaRadii.sm),
+                ),
+                child: Icon(category.icon, color: TamivaColors.gold, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(category.title, style: textTheme.titleMedium),
+                    const SizedBox(height: 2),
                     Text(category.subtitle, style: textTheme.bodyMedium),
                   ],
                 ),

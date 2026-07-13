@@ -671,7 +671,102 @@ class _Chip extends StatelessWidget {
         children: [
           Text(
             label,
-           return _ChipPickerCard(
+            style: const TextStyle(
+              fontSize: 12,
+              color: TamivaColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 6),
+          InkWell(
+            onTap: onRemove,
+            child: const Icon(Icons.close, size: 14, color: TamivaColors.gold),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IndustryPicker extends StatelessWidget {
+  final List<String> selected;
+  final VoidCallback onTap;
+  final void Function(String) onRemove;
+  const _IndustryPicker({
+    required this.selected,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _ChipPickerCard(
+      label: 'INDUSTRY',
+      emptyHint: 'Tap to pick one or more',
+      selected: selected,
+      onTap: onTap,
+      onRemove: onRemove,
+    );
+  }
+}
+
+class _TonePicker extends StatelessWidget {
+  final List<String> selected;
+  final VoidCallback onTap;
+  final void Function(String) onRemove;
+  const _TonePicker({
+    required this.selected,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _ChipPickerCard(
+      label: 'BRAND TONE (MAX 2)',
+      emptyHint: 'Tap to pick one or two tones',
+      selected: selected,
+      onTap: onTap,
+      onRemove: onRemove,
+    );
+  }
+}
+
+class _PalettePicker extends StatelessWidget {
+  final List<String> selected;
+  final VoidCallback onTap;
+  final void Function(String) onRemove;
+  const _PalettePicker({
+    required this.selected,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _ChipPickerCard(
+      label: 'COLOUR PALETTE (MAX 2)',
+      emptyHint: 'Tap to pick one or two palettes',
+      selected: selected,
+      onTap: onTap,
+      onRemove: onRemove,
+    );
+  }
+}
+
+class _FontPicker extends StatelessWidget {
+  final List<String> selected;
+  final VoidCallback onTap;
+  final void Function(String) onRemove;
+  const _FontPicker({
+    required this.selected,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _ChipPickerCard(
       label: 'TYPOGRAPHY STYLE (MAX 2)',
       emptyHint: 'Tap to pick one or two styles',
       selected: selected,

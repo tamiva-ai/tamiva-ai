@@ -620,7 +620,21 @@ class _InstagramBadge extends StatelessWidget {
               width: 16,
               height: 16,
               child: CustomPaint(painter: _IgGlyphPainter()),
-          
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '@tamiva.media',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: TamivaColors.textSecondary,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _IgGlyphPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
