@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../errors/user_facing_error.dart';
 import '../services/api_client.dart';
+import '../services/asset_saver.dart';
+import '../widgets/net_image.dart';
 import '../models/models.dart';
 import '../data/palette_styles.dart';
 import '../data/font_pairs.dart';
@@ -74,6 +76,38 @@ Future<void> openProjectPreview(
 }
 
 
+/// Saves an image asset (data: URL or http(s) URL) to the device
+/// gallery, showing progress + result feedback via SnackBars.
+Future<void> _downloadImageAsset(BuildContext context, String url) async {
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.showSnackBar(
+    const SnackBar(
+      content: Text('Saving to your gallery…'),
+      duration: Duration(seconds: 1),
+    ),
+  );
+  final result = await saveImageToGallery(url);
+  if (!context.mounted) return;
+  messenger.hideCurrentSnackBar();
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text(result.ok ? 'Saved to your gallery.' : result.error!),
+    ),
+  );
+}
+
+/// Opens a video/film asset URL in the device browser, where it can be
+/// played or downloaded. In-app playback lands in a later milestone.
+Future<void> _openAssetInBrowser(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url);
+  final launched = uri != null &&
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!context.mounted || launched) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text("Couldn't open the film. Try again in a moment.")),
+  );
+}
+
 /// The "brand kit" reveal screen. Kicks off logo generation on load,
 /// polls for status, and displays five brand-kit sections.
 ///
@@ -108,11 +142,47 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   Timer? _pollTimer;
   UserFacingError? _error;
 
+  // True while we check the backend for an existing logo on load, so we
+  // don't flash the "Generate your logo" CTA before we know the state.
+  bool _bootstrapping = true;
+  // True while a manual logo generation request is in flight, for the
+  // CTA button's loading state.
+  bool _startingLogo = false;
+
   @override
   void initState() {
     super.initState();
     _loadProfile();
-    _startLogoGeneration();
+    _bootstrapLogo();
+  }
+
+  /// On load, adopt any logo the user already has instead of blindly
+  /// firing a new generation on every mount (which is what spawned
+  /// duplicate logos). If a logo exists we resume/show it; if it's
+  /// still running we start polling; if none exists we fall through to
+  /// a manual "Generate your logo" CTA and wait for the user to tap it.
+  Future<void> _bootstrapLogo() async {
+    try {
+      final projects = await widget.apiClient
+          .getBusinessProfileProjects(widget.businessProfileId);
+      final logo = projects.logo;
+      if (!mounted) return;
+      if (logo != null) {
+        setState(() {
+          _projectId = logo.id;
+          _project = logo;
+          _bootstrapping = false;
+        });
+        if (logo.isInProgress) {
+          _pollTimer =
+              Timer.periodic(const Duration(seconds: 3), (_) => _poll());
+        }
+        return;
+      }
+    } catch (_) {
+      // Non-fatal: fall through to the manual CTA so the user can start.
+    }
+    if (mounted) setState(() => _bootstrapping = false);
   }
 
   Future<void> _loadProfile() async {
@@ -131,16 +201,34 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     super.dispose();
   }
 
-  Future<void> _startLogoGeneration() async {
+  /// Manually starts logo generation (from the CTA, a failed-row retry,
+  /// or the error-screen retry). Guards against double-fire and wires
+  /// the new project into this screen's own polling so the reveal
+  /// triggers when the logo lands.
+  Future<void> _beginLogoGeneration() async {
+    if (_startingLogo) return;
+    setState(() {
+      _startingLogo = true;
+      _error = null;
+    });
     try {
       final projectId = await widget.apiClient.createLogoProject(
         businessProfileId: widget.businessProfileId,
         stylePrompt: 'clean, modern, minimal geometric mark',
       );
-      setState(() => _projectId = projectId);
+      if (!mounted) return;
+      setState(() {
+        _projectId = projectId;
+        _startingLogo = false;
+      });
+      _pollTimer?.cancel();
       _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
     } catch (e) {
-      setState(() => _error = UserFacingError.from(e, operation: 'start generation'));
+      if (!mounted) return;
+      setState(() {
+        _startingLogo = false;
+        _error = UserFacingError.from(e, operation: 'start generation');
+      });
     }
   }
 
@@ -168,26 +256,13 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   Future<void> _handleStatusBoardTap(String artifactKey, Project? project) async {
     switch (artifactKey) {
       case 'logo':
-        // Logo auto-generates on screen load. Tapping a ready row opens
-        // the preview; tapping a failed row retries.
+        // Tapping a ready row opens the preview; a not-started or failed
+        // row (re)starts generation via the parent so this screen's own
+        // polling picks it up and reveals the kit when it lands.
         if (project != null && project.isReady) {
           await openProjectPreview(context, widget.apiClient, project);
-        } else if (project != null && project.isFailed) {
-          await retryLogoGeneration(
-            context: context,
-            apiClient: widget.apiClient,
-            businessProfileId: widget.businessProfileId,
-          );
-          // No need to do anything with the new id - the next poll
-          // cycle will pick it up and show it as generating.
-        } else if (project == null) {
-          // Logo hasn't been kicked off yet (shouldn't happen since we
-          // auto-start on init, but defensive).
-          await retryLogoGeneration(
-            context: context,
-            apiClient: widget.apiClient,
-            businessProfileId: widget.businessProfileId,
-          );
+        } else if (project == null || project.isFailed) {
+          await _beginLogoGeneration();
         }
         return;
       case 'colors':
@@ -270,7 +345,9 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   Widget build(BuildContext context) {
     return HeroBannerScaffold(
       heroAsset: 'assets/hero/brand_assets.png',
-      title: _logoReady ? 'Your brand kit' : 'Generating your brand…',
+      title: (_logoReady || _projectId == null)
+          ? 'Your brand kit'
+          : 'Generating your brand…',
       actions: [LogoutAction(apiClient: widget.apiClient)],
       bottomBar: SafeArea(
         child: Padding(
@@ -297,8 +374,47 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             _project = null;
             _projectId = null;
           });
-          _startLogoGeneration();
+          _beginLogoGeneration();
         },
+      );
+    }
+
+    // Still checking the backend for an existing logo — brief spinner so
+    // we never flash the CTA and then swap it for the status board.
+    if (_bootstrapping) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // No logo project yet. Show an explicit "Generate your logo" CTA
+    // instead of silently auto-firing on mount — the user chooses when
+    // to spend their one free generation, and sees clear feedback.
+    if (_projectId == null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(28, 40, 28, 28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(Icons.auto_awesome, size: 44, color: TamivaColors.gold),
+            const SizedBox(height: 20),
+            Text('Generate your logo',
+                textAlign: TextAlign.center, style: textTheme.titleLarge),
+            const SizedBox(height: 10),
+            Text(
+              "We'll craft a clean, modern mark from your business profile. "
+              "This is your 1 free logo.",
+              textAlign: TextAlign.center,
+              style: textTheme.bodyMedium
+                  ?.copyWith(color: TamivaColors.textSecondary),
+            ),
+            const SizedBox(height: 28),
+            GradientCtaButton(
+              onPressed: _startingLogo ? null : _beginLogoGeneration,
+              loading: _startingLogo,
+              child: const Text('Generate logo'),
+            ),
+          ],
+        ),
       );
     }
 
@@ -472,7 +588,7 @@ class _LogoPreview extends StatelessWidget {
         ),
       );
     }
-    return CachedNetworkImage(
+    return NetImage(
       imageUrl: project!.assets.first.url,
       fit: BoxFit.cover,
       placeholder: (_, __) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
@@ -583,6 +699,7 @@ Future<bool?> _confirmDialog(
   required String title,
   required String body,
   required String costLine,
+  bool strikeCost = false,
   String confirmLabel = 'Generate',
 }) {
   return showDialog<bool>(
@@ -612,16 +729,18 @@ Future<bool?> _confirmDialog(
                 const Icon(Icons.bolt, color: TamivaColors.gold, size: 16),
                 const SizedBox(width: 8),
                 Text(costLine,
-                    style: Theme.of(ctx)
-                        .textTheme
-                        .labelLarge
-                        ?.copyWith(color: TamivaColors.gold)),
+                    style: Theme.of(ctx).textTheme.labelLarge?.copyWith(
+                          color: TamivaColors.gold,
+                          decoration:
+                              strikeCost ? TextDecoration.lineThrough : null,
+                          decorationColor: TamivaColors.gold,
+                        )),
               ],
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            '1 free generation per day. Limit refreshes at midnight.',
+            '1 Free generation',
             style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
                   color: TamivaColors.textFaint,
                   fontSize: 11,
@@ -656,7 +775,8 @@ Future<String?> startCarouselGeneration({
     title: 'Generate your carousel',
     body: "We'll render a 5-slide Brand Story arc using your business "
         "profile and any reference photos you uploaded.",
-    costLine: 'Est. ₹30',
+    costLine: 'Est. ₹150',
+    strikeCost: true,
   );
   if (confirmed != true) return null;
   try {
@@ -879,7 +999,7 @@ class _CarouselPlaceholder extends StatelessWidget {
                       const Icon(Icons.auto_awesome, size: 13, color: TamivaColors.gold),
                       const SizedBox(width: 5),
                       Text(
-                        'Tap to generate · est. ₹30',
+                        'Tap to generate · Free',
                         style: Theme.of(context).textTheme.labelMedium,
                       ),
                     ],
@@ -950,7 +1070,7 @@ class _CarouselReadyPreview extends StatelessWidget {
                   topLeft: Radius.circular(TamivaRadii.md - 1),
                   bottomLeft: Radius.circular(TamivaRadii.md - 1),
                 ),
-                child: CachedNetworkImage(
+                child: NetImage(
                   imageUrl: assets.first.url,
                   fit: BoxFit.cover,
                   placeholder: (_, __) => const Center(
@@ -983,7 +1103,7 @@ class _CarouselReadyPreview extends StatelessWidget {
                             Expanded(
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(6),
-                                child: CachedNetworkImage(
+                                child: NetImage(
                                   imageUrl: assets[i].url,
                                   fit: BoxFit.cover,
                                   placeholder: (_, __) => ColoredBox(
@@ -1222,7 +1342,7 @@ class _FilmReadyPreview extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            CachedNetworkImage(
+            NetImage(
               imageUrl: asset.url,
               fit: BoxFit.cover,
               placeholder: (_, __) => const Center(
@@ -1384,6 +1504,14 @@ class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
         title: Text(
           '${_index + 1} / ${widget.assets.length} - ${_roles[_index.clamp(0, _roles.length - 1)]}',
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Save slide to gallery',
+            onPressed: () =>
+                _downloadImageAsset(context, widget.assets[_index].url),
+          ),
+        ],
       ),
       body: PageView.builder(
         controller: _controller,
@@ -1395,7 +1523,7 @@ class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
             padding: const EdgeInsets.all(20),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(TamivaRadii.md),
-              child: CachedNetworkImage(
+              child: NetImage(
                 imageUrl: a.url,
                 fit: BoxFit.contain,
                 placeholder: (_, __) => const Center(
@@ -1421,7 +1549,16 @@ class _FilmViewerScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: TamivaColors.background,
-      appBar: AppBar(title: const Text('Your brand film')),
+      appBar: AppBar(
+        title: const Text('Your brand film'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.open_in_new_rounded),
+            tooltip: 'Open / download film',
+            onPressed: () => _openAssetInBrowser(context, asset.url),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -1430,7 +1567,7 @@ class _FilmViewerScreen extends StatelessWidget {
             Expanded(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(TamivaRadii.md),
-                child: CachedNetworkImage(
+                child: NetImage(
                   imageUrl: asset.url,
                   fit: BoxFit.cover,
                   placeholder: (_, __) => const Center(
@@ -1489,6 +1626,14 @@ class _LogoViewerScreenState extends State<_LogoViewerScreen> {
       backgroundColor: TamivaColors.background,
       appBar: AppBar(
         title: Text('${_index + 1} / ${widget.assets.length} · Logo'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Save to gallery',
+            onPressed: () =>
+                _downloadImageAsset(context, widget.assets[_index].url),
+          ),
+        ],
       ),
       body: PageView.builder(
         controller: _controller,
@@ -1500,7 +1645,7 @@ class _LogoViewerScreenState extends State<_LogoViewerScreen> {
             padding: const EdgeInsets.all(20),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(TamivaRadii.md),
-              child: CachedNetworkImage(
+              child: NetImage(
                 imageUrl: a.url,
                 fit: BoxFit.contain,
                 placeholder: (_, __) => const Center(

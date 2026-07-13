@@ -30,6 +30,12 @@ jobs:
           if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
             sed -i '/<manifest /a\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
           fi
+          # gal saves generated images to the gallery. API 29+ uses
+          # scoped storage (no permission needed); Android 9 and below
+          # (API <= 28) still require WRITE_EXTERNAL_STORAGE.
+          if ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$MANIFEST"; then
+            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>' "$MANIFEST"
+          fi
           # Android 11+ package visibility - url_launcher needs to see
           # browser and app intent handlers or launchUrl() silently fails.
           if ! grep -q "<queries>" "$MANIFEST"; then

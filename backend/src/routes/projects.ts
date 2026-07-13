@@ -75,11 +75,19 @@ async function enforceFreeQuota(businessProfileId: string, type: "logo" | "carou
 
   if (profile.user.tier === "pro") return { allowed: true as const };
 
-  // Free path: count ready Projects of this type. If >= 1, refuse.
-  const readyCount = await prisma.project.count({
-    where: { businessProfileId, type, status: "ready" },
+  // Free path: count Projects already in flight OR finished for this
+  // type. Counting queued/generating (not just ready) closes the race
+  // where a second request slips through while the first is still
+  // processing and spawns duplicate generations. A "failed" project is
+  // deliberately excluded so the user can retry after a failure.
+  const activeCount = await prisma.project.count({
+    where: {
+      businessProfileId,
+      type,
+      status: { in: ["queued", "generating", "ready"] },
+    },
   });
-  if (readyCount >= 1) {
+  if (activeCount >= 1) {
     const label = type === "logo" ? "logo" : type === "carousel" ? "carousel" : "brand film";
     return {
       allowed: false as const,

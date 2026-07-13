@@ -161,7 +161,10 @@ authRouter.post("/login", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
-  if (!user || !user.passwordHash) {
+  if (!user) {
+    return res.status(404).json({ error: "This email isn't registered." });
+  }
+  if (!user.passwordHash) {
     return res.status(401).json({ error: "Incorrect email or password." });
   }
 
@@ -206,17 +209,20 @@ authRouter.post("/forgot-password", async (req, res) => {
   const email = parsed.data.email.toLowerCase();
   const user = await prisma.user.findUnique({ where: { email } });
 
-  // Always return success to avoid leaking whether an email is registered.
-  // Only actually send a code if the user exists.
-  if (user) {
-    const code = generateCode();
-    resetCodes.set(email, {
-      code,
-      expiresAt: Date.now() + RESET_CODE_TTL_MS,
-      attempts: 0,
-    });
-    await sendPasswordResetEmail(email, code);
+  // Product decision: tell the user directly when an email isn't
+  // registered, rather than the enumeration-safe "always say sent".
+  // No code is generated or emailed for an unknown address.
+  if (!user) {
+    return res.status(404).json({ error: "This email isn't registered." });
   }
+
+  const code = generateCode();
+  resetCodes.set(email, {
+    code,
+    expiresAt: Date.now() + RESET_CODE_TTL_MS,
+    attempts: 0,
+  });
+  await sendPasswordResetEmail(email, code);
 
   res.json({ sent: true });
 });

@@ -1,3 +1,26 @@
+# v32 — Auth UX, logo display, quota race & download fixes
+
+Built 2026-07-13 on top of v31. Six fixes from the last session
+(re-applied — the prior session hit a token limit before producing a zip).
+
+## Fixes in v32
+
+| Path | Fix |
+|---|---|
+| `backend/src/routes/auth.ts` | Login returns 404 "This email isn't registered." for unknown email (wrong password still 401). Forgot-password returns 404 for unknown email and sends no code (was: always `{sent:true}`). |
+| `backend/src/routes/projects.ts` | `enforceFreeQuota` now counts `queued+generating+ready` (not just `ready`), closing the race that spawned duplicate logos. Failed projects excluded so retries work. |
+| `flutter_app/lib/widgets/net_image.dart` | (NEW) Drop-in for `CachedNetworkImage` that also renders `data:` (base64) URLs via `Image.memory`. Fixes logos not displaying. |
+| `flutter_app/lib/services/asset_saver.dart` | (NEW) Saves image assets (data: or http) to the device gallery via `gal`. |
+| `flutter_app/lib/screens/brand_assets_screen.dart` | All 7 `CachedNetworkImage`→`NetImage`; save-to-gallery buttons on logo+carousel viewers, open-in-browser on film viewer; cost dialog copy ("1 Free generation", carousel ~~₹150~~ struck); removed auto-generation on mount — now bootstraps existing logo or shows a manual "Generate your logo" CTA. |
+| `flutter_app/pubspec.yaml` | Added `gal: ^2.3.0`. |
+| `.github/workflows/build-apk.yml` | Inject `WRITE_EXTERNAL_STORAGE` (maxSdkVersion 28) for gal on older Android. |
+
+## Known follow-ups (not in this build)
+- Email casing is inconsistent: forgot-password lowercases lookups; signup/login don't. A mixed-case signup email could get a false "not registered" on reset. Normalize emails to fix.
+- First build with `gal` (first native plugin beyond image_picker/url_launcher) — watch the CI Gradle step.
+
+---
+
 # v31 — Tamiva build fixes (FINAL)
 
 This is the final v25 source code + the workflow fix + ChatGPT's
