@@ -1825,75 +1825,12 @@ class _FilmPreviewState extends State<_FilmPreview> {
         await _openFullScreenViewer(context);
         return;
       }
+      // else: fall through to start a new attempt.
     }
 
     // ── 6. First tap (no project yet) OR a retry after a failed run
     //     with no assets. Fire the start call.
     await _startGenerationAttempt();
-  }
-
-  Future<void> _startGenerationAttempt() async {
-    if (_requestInFlight) return;
-    setState(() {
-      _requestInFlight = true;
-      _attempts += 1;
-    });
-    String? projectId;
-    try {
-      projectId = await startFilmGeneration(
-        context: context,
-        apiClient: widget.apiClient,
-        businessProfileId: widget.businessProfileId,
-      );
-    } catch (_) {
-      // startFilmGeneration surfaces its own SnackBar; counter is
-      // already bumped for the build() method to pick up.
-    }
-    if (!mounted) return;
-    setState(() => _requestInFlight = false);
-    if (projectId == null) return;
-    _startPolling(projectId);
-  }
-
-  void _startPolling(String projectId, {Project? seed}) {
-    _pollTimer?.cancel();
-    setState(() => _project = seed ??
-        Project(
-          id: projectId,
-          type: 'video',
-          status: 'queued',
-          assets: const [],
-        ));
-    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _poll(projectId));
-    _poll(projectId);
-  }
-
-  Future<void> _poll(String projectId) async {
-    try {
-      final project = await widget.apiClient.getProject(projectId);
-      if (!mounted) return;
-      final succeeded = project.isReady && project.assets.isNotEmpty;
-      final failed = project.isFailed;
-      setState(() {
-        _project = project;
-        if (succeeded) _everSucceeded = true;
-      });
-      if (succeeded || failed) {
-        _pollTimer?.cancel();
-      }
-    } catch (_) {
-      // transient
-    }
-  }
-
-  Future<void> _openFullScreenViewer(BuildContext context) async {
-    final assets = _project?.assets ?? const [];
-    if (assets.isEmpty) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _FilmViewerScreen(asset: assets.first),
-      ),
-    );
   }
 
   @override
@@ -1910,4 +1847,787 @@ class _FilmPreviewState extends State<_FilmPreview> {
         onTap: () => _openFullScreenViewer(context),
       );
     }
-    if (_isLockedBe
+    if (_isLockedBehindSupport) {
+      return const _FilmSupportLockTile();
+    }
+    if (_project != null && _project!.isFailed) {
+      return GestureDetector(
+        onTap: _onTap,
+        behavior: HitTestBehavior.opaque,
+        child: _FilmFailedTile(attemptsLeft: _maxAttempts - _attempts),
+      );
+    }
+    return GestureDetector(
+      onTap: _onTap,
+      behavior: HitTestBehavior.opaque,
+      child: const _FilmPlaceholder(),
+    );
+  }
+}
+
+/// v37: shown when a film project exists but failed with no
+/// recoverable assets. Tapping re-enters the generation path under
+/// the [_maxAttempts] cap. The attempt counter surfaces how many
+/// taps remain before the tile locks.
+class _FilmFailedTile extends StatelessWidget {
+  /// Number of generation attempts still available. Shown so the user
+  /// knows how many taps remain before the tile locks.
+  final int attemptsLeft;
+  const _FilmFailedTile({required this.attemptsLeft});
+
+  @override
+  Widget build(BuildContext context) {
+    final remainingLabel = attemptsLeft > 0
+        ? 'Tap to retry · $attemptsLeft attempt${attemptsLeft == 1 ? '' : 's'} left'
+        : 'Tap to retry';
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [TamivaColors.maroon, TamivaColors.background, TamivaColors.ember],
+          stops: [0, 0.55, 1],
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            color: TamivaColors.error,
+            size: 26,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Film generation failed',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  remainingLabel,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: TamivaColors.textSecondary,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// v37: shown after the user has burned through the retry cap with
+/// no successful generation. Read-only — no tap handler.
+class _FilmSupportLockTile extends StatelessWidget {
+  const _FilmSupportLockTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [TamivaColors.maroon, TamivaColors.background, TamivaColors.ember],
+          stops: [0, 0.55, 1],
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.support_agent_outlined,
+            color: TamivaColors.gold,
+            size: 26,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'We couldn\'t generate this film',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tap support in the app menu to get help. We\'ll start a fresh run once we hear back.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: TamivaColors.textSecondary,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilmPlaceholder extends StatelessWidget {
+  const _FilmPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [TamivaColors.maroon, TamivaColors.background, TamivaColors.ember],
+          stops: [0, 0.55, 1],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Center(
+            child: Container(
+              width: 66,
+              height: 66,
+              decoration: BoxDecoration(
+                color: TamivaColors.background.withOpacity(0.6),
+                shape: BoxShape.circle,
+                border: Border.all(color: TamivaColors.gold, width: 1.5),
+              ),
+              child: const Icon(
+                Icons.play_arrow,
+                color: TamivaColors.gold,
+                size: 34,
+              ),
+            ),
+          ),
+          Positioned(
+            left: 16,
+            bottom: 14,
+            right: 16,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '10-sec cinematic opener',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: TamivaColors.textPrimary,
+                      ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Golden hour · warm color grade',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: TamivaColors.textSecondary,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Icon(Icons.auto_awesome, size: 12, color: TamivaColors.gold),
+                    const SizedBox(width: 5),
+                    Text(
+                      'Tap to generate · est. ₹60–100',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilmReadyPreview extends StatelessWidget {
+  final ProjectAsset asset;
+  final VoidCallback onTap;
+  const _FilmReadyPreview({required this.asset, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox.expand(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            NetImage(
+              imageUrl: asset.url,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => const Center(
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              errorWidget: (_, __, ___) => Container(
+                color: TamivaColors.background,
+                child: const Icon(Icons.broken_image, color: TamivaColors.textFaint),
+              ),
+            ),
+            Container(color: Colors.black.withOpacity(0.18)),
+            Center(
+              child: Container(
+                width: 66,
+                height: 66,
+                decoration: BoxDecoration(
+                  color: TamivaColors.background.withOpacity(0.6),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: TamivaColors.gold, width: 1.5),
+                ),
+                child: const Icon(
+                  Icons.play_arrow,
+                  color: TamivaColors.gold,
+                  size: 34,
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              bottom: 14,
+              right: 16,
+              child: Row(
+                children: [
+                  const Icon(Icons.movie_creation_outlined, size: 14, color: TamivaColors.gold),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Your 8-sec film · tap to view',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: TamivaColors.textPrimary,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Reusable helpers - generating state, error tile, confirmation dialog.
+
+class _GeneratingTile extends StatelessWidget {
+  final String label;
+  final Duration eta;
+  const _GeneratingTile({required this.label, required this.eta});
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: TamivaColors.surface,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              height: 28,
+              width: 28,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: TamivaColors.textSecondary),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              eta.inSeconds < 60
+                  ? '~${eta.inSeconds}s left'
+                  : '~${(eta.inSeconds / 60).round()} min left',
+              style: const TextStyle(fontSize: 10, color: TamivaColors.textFaint),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorTile extends StatelessWidget {
+  final UserFacingError error;
+  final VoidCallback onRetry;
+  const _ErrorTile({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onRetry,
+      behavior: HitTestBehavior.opaque,
+      child: ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.refresh, color: TamivaColors.gold, size: 24),
+                const SizedBox(height: 8),
+                Text(
+                  error.message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: TamivaColors.textSecondary),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tap to retry',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Full-screen viewers (post-generation).
+
+class _CarouselViewerScreen extends StatefulWidget {
+  final List<ProjectAsset> assets;
+  const _CarouselViewerScreen({required this.assets});
+
+  @override
+  State<_CarouselViewerScreen> createState() => _CarouselViewerScreenState();
+}
+
+class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
+  final PageController _controller = PageController();
+  int _index = 0;
+  bool _savingAll = false;
+
+  static const _roles = ['Hook', 'Problem', 'Vision', 'Product', 'CTA'];
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// v36 / S3.17 — save every slide in parallel. Saves the user 5 taps
+  /// and gives them a single success/failure SnackBar at the end.
+  Future<void> _saveAll() async {
+    if (_savingAll) return;
+    setState(() => _savingAll = true);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Saving all slides to your gallery…'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+    final urls = widget.assets.map((a) => a.url).toList();
+    final results = await Future.wait(urls.map((u) => saveImageToGallery(u)));
+    if (!mounted) return;
+    final failed =
+        results.where((r) => !r.ok).map((r) => r.error).toList();
+    messenger.hideCurrentSnackBar();
+    if (failed.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('All slides saved to your gallery.')),
+      );
+    } else if (failed.length == urls.length) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(failed.first ?? "Couldn't save.")),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Saved ${urls.length - failed.length} of ${urls.length} slides.',
+          ),
+        ),
+      );
+    }
+    setState(() => _savingAll = false);
+  }
+
+  Future<void> _shareCurrent() async {
+    final url = widget.assets[_index].url;
+    await ShareService.shareImageUrl(
+      url,
+      name:
+          'tamiva-carousel-${_index + 1}-${_roles[_index.clamp(0, _roles.length - 1)].toLowerCase()}.png',
+      text: 'Slide ${_index + 1} of my Tamiva carousel',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: TamivaColors.background,
+      appBar: AppBar(
+        title: Text(
+          '${_index + 1} / ${widget.assets.length} - ${_roles[_index.clamp(0, _roles.length - 1)]}',
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: 'Share slide',
+            onPressed: _shareCurrent,
+          ),
+          IconButton(
+            icon: const Icon(Icons.save_alt_rounded),
+            tooltip: 'Save all slides',
+            onPressed: _savingAll ? null : _saveAll,
+          ),
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Save slide to gallery',
+            onPressed: () =>
+                _downloadImageAsset(context, widget.assets[_index].url),
+          ),
+        ],
+      ),
+      body: PageView.builder(
+        controller: _controller,
+        itemCount: widget.assets.length,
+        onPageChanged: (i) => setState(() => _index = i),
+        itemBuilder: (_, i) {
+          final a = widget.assets[i];
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(TamivaRadii.md),
+              child: NetImage(
+                imageUrl: a.url,
+                fit: BoxFit.contain,
+                placeholder: (_, __) => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+                errorWidget: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image, color: TamivaColors.textFaint, size: 32),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _FilmViewerScreen extends StatefulWidget {
+  final ProjectAsset asset;
+  const _FilmViewerScreen({required this.asset});
+
+  @override
+  State<_FilmViewerScreen> createState() => _FilmViewerScreenState();
+}
+
+class _FilmViewerScreenState extends State<_FilmViewerScreen> {
+  // v36 / S2.11 — in-app playback via video_player.
+  VideoPlayerController? _controller;
+  bool _initializing = true;
+  String? _initError;
+
+  @override
+  void initState() {
+    super.initState();
+    _initController();
+  }
+
+  Future<void> _initController() async {
+    try {
+      final c = await FilmPlaybackService.controllerFor(widget.asset.url);
+      if (!mounted) {
+        await c.dispose();
+        return;
+      }
+      setState(() {
+        _controller = c;
+        _initializing = false;
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _initializing = false;
+        _initError = "Couldn't load the film. Try opening it in a browser.";
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _downloadFilm() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Downloading film…'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+    final result = await FilmPlaybackService.downloadForSharing(
+      widget.asset.url,
+    );
+    if (!mounted) return;
+    messenger.hideCurrentSnackBar();
+    if (result.ok && result.bytes != null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Film ready to share.')),
+      );
+      await ShareService.shareVideoBytes(
+        result.bytes!,
+        name: 'tamiva-film.mp4',
+        text: 'My brand film from Tamiva',
+      );
+    } else {
+      final err = result.error ?? "Couldn't save.";
+      messenger.showSnackBar(SnackBar(content: Text(err)));
+      if (err.toLowerCase().contains('settings')) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text('Tap to open Settings.'),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: FilmPlaybackService.openAppSettings,
+            ),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: TamivaColors.background,
+      appBar: AppBar(
+        title: const Text('Your brand film'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: 'Save film to gallery',
+            onPressed: _downloadFilm,
+          ),
+          IconButton(
+            icon: const Icon(Icons.open_in_new_rounded),
+            tooltip: 'Open in browser',
+            onPressed: () => _openAssetInBrowser(context, widget.asset.url),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(TamivaRadii.md),
+                child: _buildPlayer(context),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Tap play to watch in-app, or save it to your gallery to share.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlayer(BuildContext context) {
+    if (_initializing) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_initError != null) {
+      return ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.broken_image, color: TamivaColors.textFaint, size: 36),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  _initError!,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () => _openAssetInBrowser(context, widget.asset.url),
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                label: const Text('Open in browser'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final c = _controller!;
+    return ColoredBox(
+      color: Colors.black,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
+              child: VideoPlayer(c),
+            ),
+          ),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                c.value.isPlaying ? c.pause() : c.play();
+              });
+            },
+            child: Container(
+              color: const Color(0x33000000),
+              child: Center(
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: c.value.isPlaying ? 0 : 1,
+                  child: const Icon(
+                    Icons.play_circle_outline,
+                    color: Colors.white,
+                    size: 80,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: VideoProgressIndicator(
+              c,
+              allowScrubbing: true,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              colors: const VideoProgressColors(
+                playedColor: TamivaColors.gold,
+                bufferedColor: Color(0x55D4A72C),
+                backgroundColor: Color(0x33FFFFFF),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Full-screen viewer for a finished logo. Swipeable across all
+/// variants if the project produced more than one.
+class _LogoViewerScreen extends StatefulWidget {
+  final List<ProjectAsset> assets;
+  const _LogoViewerScreen({required this.assets});
+
+  @override
+  State<_LogoViewerScreen> createState() => _LogoViewerScreenState();
+}
+
+class _LogoViewerScreenState extends State<_LogoViewerScreen> {
+  final PageController _controller = PageController();
+  int _index = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: TamivaColors.background,
+      appBar: AppBar(
+        title: Text('${_index + 1} / ${widget.assets.length} · Logo'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: 'Share',
+            onPressed: () => ShareService.shareImageUrl(
+              widget.assets[_index].url,
+              name: 'tamiva-logo.png',
+              text: 'My brand from Tamiva',
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Regenerate',
+            onPressed: () {
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Open the brand kit to generate a fresh logo.',
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Save to gallery',
+            onPressed: () =>
+                _downloadImageAsset(context, widget.assets[_index].url),
+          ),
+        ],
+      ),
+      body: PageView.builder(
+        controller: _controller,
+        itemCount: widget.assets.length,
+        onPageChanged: (i) => setState(() => _index = i),
+        itemBuilder: (_, i) {
+          final a = widget.assets[i];
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(TamivaRadii.md),
+              child: NetImage(
+                imageUrl: a.url,
+                fit: BoxFit.contain,
+                placeholder: (_, __) => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+                errorWidget: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image,
+                      color: TamivaColors.textFaint, size: 32),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// (v37) Brand Colors + Typography detail widgets removed. The
+// signup-time palette / typography preferences remain on BusinessProfile;
+// only the dashboard surfaces were dropped.
+
+// v37: hex-to-color helper retained as a no-dependency utility.
+Color _hexToColor(String hex) {
+  final cleaned = hex.replaceFirst('#', '');
+  final v = int.tryParse('FF$cleaned', radix: 16);
+  return v == null ? TamivaColors.textFaint : Color(v);
+}
