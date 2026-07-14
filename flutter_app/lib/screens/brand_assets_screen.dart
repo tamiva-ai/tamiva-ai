@@ -1073,41 +1073,6 @@ Future<String?> startCarouselGeneration({
   }
 }
 
-/// Kicks off a carousel generation. Fires the request and returns the
-/// new projectId. Returns null on failure.
-///
-/// v37: dropped the cost-estimate confirmation dialog. The tap on the
-/// tile is itself the user's intent; an extra modal was just friction
-/// now that plans are flat (every paid plan gets unlimited). The
-/// "Cost" line on the tile is enough context.
-Future<String?> startCarouselGeneration({
-  required BuildContext context,
-  required ApiClient apiClient,
-  required String businessProfileId,
-}) async {
-  try {
-    return await apiClient.createCarouselProject(
-      businessProfileId: businessProfileId,
-    );
-  } on ApiException catch (e) {
-    if (!context.mounted) return null;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(UserFacingError.from(e, operation: 'start carousel').message),
-      ),
-    );
-    return null;
-  } catch (e) {
-    if (!context.mounted) return null;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(UserFacingError.from(e, operation: 'start carousel').message),
-      ),
-    );
-    return null;
-  }
-}
-
 /// Same shape as startCarouselGeneration but for the 8-second film.
 /// v37: dropped the cost-estimate confirmation dialog (see
 /// startCarouselGeneration for the rationale).
@@ -2703,3 +2668,4 @@ Color _hexToColor(String hex) {
   final v = int.tryParse('FF$cleaned', radix: 16);
   return v == null ? TamivaColors.textFaint : Color(v);
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
