@@ -578,44 +578,63 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             style: textTheme.bodyMedium,
           ),
           const SizedBox(height: 28),
-          _BrandKitSection(
-            title: 'Logo',
-            hiddenCount: 0,
-            frontChild: _LogoPreview(project: _project),
-            // v37: first-time user with no project yet can tap the
-            // Logo tile to kick off generation. After the logo lands
-            // we tap-to-open the viewer instead.
-            onFrontTap: _project == null
-                ? _beginLogoGeneration
-                : (_project!.isReady
-                    ? () => openProjectPreview(
-                        context, widget.apiClient, _project!)
-                    : null),
-          ),
-          const SizedBox(height: 28),
-          _BrandKitSection(
-            title: 'Social carousel',
-            hiddenCount: 0,
-            frontChild: _CarouselPreview(
-              apiClient: widget.apiClient,
-              businessProfileId: widget.businessProfileId,
-            ),
-          ),
-          const SizedBox(height: 28),
-          _BrandKitSection(
-            title: '10-sec brand film',
-            hiddenCount: 0,
-            frontChild: _FilmPreview(
-              apiClient: widget.apiClient,
-              businessProfileId: widget.businessProfileId,
-            ),
-          ),
-          const SizedBox(height: 28),
-          _BrandKitSection(
-            title: 'Website',
-            hiddenCount: 0,
-            frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
-            onFrontTap: _openPricingScreen,
+          // v37: 2-column grid layout. Each tile takes ~half the row,
+          // so four tiles arrange in two rows of two. The Wrap handles
+          // tight widths gracefully (it falls back to a single column
+          // on narrow phones) without needing a separate media query.
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              SizedBox(
+                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
+                child: _BrandKitSection(
+                  title: 'Logo',
+                  hiddenCount: 0,
+                  frontChild: _LogoPreview(project: _project),
+                  // v37: first-time user with no project yet can tap the
+                  // Logo tile to kick off generation. After the logo lands
+                  // we tap-to-open the viewer instead.
+                  onFrontTap: _project == null
+                      ? _beginLogoGeneration
+                      : (_project!.isReady
+                          ? () => openProjectPreview(
+                              context, widget.apiClient, _project!)
+                          : null),
+                ),
+              ),
+              SizedBox(
+                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
+                child: _BrandKitSection(
+                  title: 'Social carousel',
+                  hiddenCount: 0,
+                  frontChild: _CarouselPreview(
+                    apiClient: widget.apiClient,
+                    businessProfileId: widget.businessProfileId,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
+                child: _BrandKitSection(
+                  title: '10-sec brand film',
+                  hiddenCount: 0,
+                  frontChild: _FilmPreview(
+                    apiClient: widget.apiClient,
+                    businessProfileId: widget.businessProfileId,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
+                child: _BrandKitSection(
+                  title: 'Website',
+                  hiddenCount: 0,
+                  frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
+                  onFrontTap: _openPricingScreen,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 40),
         ],
