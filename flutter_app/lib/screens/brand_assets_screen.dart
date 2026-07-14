@@ -1788,6 +1788,75 @@ class _FilmPreviewState extends State<_FilmPreview> {
     super.dispose();
   }
 
+  /// Fires a single startFilmGeneration request, wires the result
+  /// into our state machine, and bumps the attempt counter. Mirrors
+  /// [_CarouselPreviewState._startGenerationAttempt].
+  Future<void> _startGenerationAttempt() async {
+    if (_requestInFlight) return;
+    setState(() {
+      _requestInFlight = true;
+      _attempts += 1;
+    });
+    String? projectId;
+    try {
+      projectId = await startFilmGeneration(
+        context: context,
+        apiClient: widget.apiClient,
+        businessProfileId: widget.businessProfileId,
+      );
+    } catch (_) {
+      // startFilmGeneration surfaces its own SnackBar; counter is
+      // already bumped for the build() method to pick up.
+    }
+    if (!mounted) return;
+    setState(() => _requestInFlight = false);
+    if (projectId == null) return;
+    _startPolling(projectId);
+  }
+
+  void _startPolling(String projectId, {Project? seed}) {
+    _pollTimer?.cancel();
+    setState(() => _project = seed ??
+        Project(
+          id: projectId,
+          type: 'video',
+          status: 'queued',
+          assets: const [],
+        ));
+    // v37: films poll a bit slower than carousels — they take longer
+    // to render server-side.
+    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _poll(projectId));
+    _poll(projectId);
+  }
+
+  Future<void> _poll(String projectId) async {
+    try {
+      final project = await widget.apiClient.getProject(projectId);
+      if (!mounted) return;
+      final succeeded = project.isReady && project.assets.isNotEmpty;
+      final failed = project.isFailed;
+      setState(() {
+        _project = project;
+        if (succeeded) _everSucceeded = true;
+      });
+      if (succeeded || failed) {
+        _pollTimer?.cancel();
+      }
+    } catch (_) {
+      // transient — keep polling
+    }
+  }
+
+  Future<void> _openFullScreenViewer(BuildContext context) async {
+    final assets = _project?.assets ?? const [];
+    if (assets.isEmpty) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FilmViewerScreen(asset: assets.first),
+      ),
+    );
+  }
+
   bool get _isGenerating =>
       _requestInFlight || (_project?.isInProgress ?? false);
 

@@ -386,4 +386,3 @@ class _StatusRow extends StatelessWidget {
 }
 
 enum _RowState { loading, placeholder, notStarted, inProgress, ready, failed }
-              
