@@ -163,6 +163,10 @@ model PaymentOrder {
   provider          String   @default("razorpay")
   amountPaise       Int
   currency          String   @default("INR")
+  // v37: which plan this order is for. Nullable because pre-v37 orders
+  // didn't track this; treat missing as "pro" in the verify / webhook
+  // paths so existing rows keep working.
+  plan              String?
   status            PaymentOrderStatus @default(created)
   providerPaymentId String?
   verifiedAt        DateTime?

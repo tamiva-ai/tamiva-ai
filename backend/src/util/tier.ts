@@ -9,8 +9,17 @@ import { prisma } from "../db/client.js";
  * - Call from any endpoint that returns tier to the client (e.g. /auth/me,
  *   /payments/verify, /projects/*).
  */
+export type TierName = "free" | "launch" | "pro" | "premium";
+
+export const PAID_TIERS: readonly TierName[] = ["launch", "pro", "premium"] as const;
+
+/** True when the tier grants paid features (any non-free plan). */
+export function isPaidTier(tier: string | null | undefined): boolean {
+  return tier != null && tier !== "free";
+}
+
 export async function getEffectiveTier(userId: string): Promise<{
-  tier: "free" | "pro";
+  tier: TierName;
   tierUpdatedAt: Date | null;
   tierExpiresAt: Date | null;
   downgraded: boolean;
@@ -28,8 +37,10 @@ export async function getEffectiveTier(userId: string): Promise<{
     };
   }
 
+  const userTier = (user.tier ?? "free") as TierName;
+
   if (
-    user.tier === "pro" &&
+    isPaidTier(userTier) &&
     user.tierExpiresAt &&
     user.tierExpiresAt.getTime() <= Date.now()
   ) {
@@ -50,7 +61,7 @@ export async function getEffectiveTier(userId: string): Promise<{
   }
 
   return {
-    tier: user.tier as "free" | "pro",
+    tier: userTier,
     tierUpdatedAt: user.tierUpdatedAt,
     tierExpiresAt: user.tierExpiresAt,
     downgraded: false,
@@ -65,7 +76,7 @@ export async function sweepExpiredProUsers(): Promise<number> {
   const cutoff = new Date();
   const { count } = await prisma.user.updateMany({
     where: {
-      tier: "pro",
+      tier: { in: [...PAID_TIERS] },
       tierExpiresAt: { lte: cutoff },
     },
     data: {

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db/client.js";
 import { idempotency } from "../middleware/idempotency.js";
-import { getEffectiveTier } from "../util/tier.js";
+import { getEffectiveTier, isPaidTier } from "../util/tier.js";
 
 export const businessRouter = Router();
 
@@ -145,9 +145,10 @@ businessRouter.put("/by-user/:userId", async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.params.userId } });
   if (!user) return res.status(404).json({ error: "User not found" });
   const effective = await getEffectiveTier(user.id);
-  if (effective.tier !== "pro") {
+  // v37: any paid tier unlocks editing.
+  if (!isPaidTier(effective.tier)) {
     return res.status(403).json({
-      error: "Editing requires Tamiva Pro. Pay ₹5000 to unlock.",
+      error: "Editing your business info requires a paid plan. Tap Upgrade to choose one.",
     });
   }
 

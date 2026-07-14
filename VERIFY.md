@@ -67,4 +67,63 @@ grep -n "FilmPlaybackService\|VideoPlayer" flutter_app/lib/screens/brand_assets_
 
 # S2.12 — draft store
 ls flutter_app/lib/services/draft_store.dart
-grep -n "_restoreDraft\|DraftStore" flutter_app/lib/sc
+grep -n "_restoreDraft\|DraftStore" flutter_app/lib/screens/business_info_screen.dart | head -3
+
+# S2.13 — carousel/film adopt on re-entry
+grep -n "_bootstrapFromExistingProject" flutter_app/lib/screens/brand_assets_screen.dart
+
+# S2.14 — per-file upload retry
+grep -n "_uploadWithRetry\|_validatePhotoFile" flutter_app/lib/screens/upload_assets_screen.dart
+
+# S2.15 — tier expiry
+grep -n "tierExpiresAt\|getEffectiveTier" backend/src/util/tier.ts | head -3
+```
+
+## 4. Verify the S3 fixes (polish)
+
+```bash
+# S3.16 — regenerate action
+grep -n "Regenerate" flutter_app/lib/screens/brand_assets_screen.dart | head -3
+
+# S3.17 — save-all + share
+grep -n "_saveAll\|ShareService" flutter_app/lib/screens/brand_assets_screen.dart | head -3
+
+# S3.18 — idempotency on mutating routes
+grep -n "idempotency" backend/src/routes/auth.ts backend/src/routes/business.ts | head -5
+
+# S3.19 — upload validation
+grep -n "_validatePhotoFile" flutter_app/lib/screens/upload_assets_screen.dart
+
+# S3.21 — settings deep-link
+grep -n "openAppSettings" flutter_app/lib/services/asset_saver.dart flutter_app/lib/services/video_downloader.dart
+```
+
+## 5. Migration safety
+
+```bash
+# Verify the v36 migration exists
+ls backend/prisma/migrations/20260713000000_v36_payments_idempotency_reset/
+# Expected: migration.sql
+
+# Confirm it drops creditsBalance (cleanup)
+grep -n "creditsBalance" backend/prisma/migrations/20260713000000_v36_payments_idempotency_reset/migration.sql
+
+# Confirm tierExpiresAt is added with backfill
+grep -n "tierExpiresAt" backend/prisma/migrations/20260713000000_v36_payments_idempotency_reset/migration.sql
+```
+
+## 6. Required env vars (Railway)
+
+Backend:
+- `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (unchanged from v33)
+- `RAZORPAY_WEBHOOK_SECRET` *(new)* — create under Razorpay Dashboard →
+  Webhooks. Point the webhook URL at `https://<your-host>/payments/webhook`,
+  events: `payment.captured`, `order.paid`.
+
+## 7. Re-run the build
+
+```bash
+git commit -am "v36 build" --allow-empty
+git push
+# GitHub Actions picks up, runs the APK build
+```

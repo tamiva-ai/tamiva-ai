@@ -1,24 +1,22 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import '../errors/user_facing_error.dart';
 import '../services/api_client.dart';
 import '../services/asset_saver.dart';
-import '../services/payment_service.dart';
 import '../services/share_service.dart';
 import '../services/video_downloader.dart';
 import '../widgets/net_image.dart';
 import '../models/models.dart';
-import '../data/palette_styles.dart';
-import '../data/font_pairs.dart';
 import '../theme/tamiva_theme.dart';
 import '../widgets/cascaded_stack.dart';
 import '../widgets/full_screen_error.dart';
 import '../widgets/hero_scaffold.dart';
 import '../widgets/logout_action.dart';
 import '../widgets/generation_status_board.dart';
+import 'artifacts_screen.dart';
+import 'pricing_screen.dart';
 
 /// Routes to the right full-screen viewer for a finished Project,
 /// based on its [Project.type]. When the project isn't ready or has no
@@ -141,9 +139,6 @@ class BrandAssetsScreen extends StatefulWidget {
 class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   String? _projectId;
   Project? _project;
-  // v24: business profile snapshot, used to render the read-only palette +
-  // font preference preview cards at the top of the reveal view.
-  BusinessProfile? _profile;
   Timer? _pollTimer;
   UserFacingError? _error;
 
@@ -167,7 +162,6 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadProfile();
     _bootstrapLogo();
     _refreshTier();
   }
@@ -223,15 +217,10 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     }
   }
 
-  Future<void> _loadProfile() async {
-    try {
-      final profile = await widget.apiClient.getBusinessProfileById(widget.businessProfileId);
-      if (!mounted) return;
-      setState(() => _profile = profile);
-    } catch (_) {
-      // Non-fatal - hide the preference cards if the lookup fails.
-    }
-  }
+  // v37: brand kit no longer renders preference cards (Colors +
+  // Typography were dropped), so the business-profile snapshot load
+  // is no longer needed here. The profile is still used elsewhere in
+  // the app via getBusinessProfileByUser on cold-start.
 
   @override
   void dispose() {
@@ -302,105 +291,112 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     }
   }
 
-  void _showComingSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Included in Tamiva Pro — tap Upgrade to unlock.'),
-      ),
-    );
-  }
-
-  Future<void> _startProCheckout() async {
-    final result = await PaymentService.startProCheckout(
-      api: widget.apiClient,
-      businessProfileId: widget.businessProfileId,
-    );
-    if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    if (result.ok) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text("You're now on Tamiva Pro.")),
-      );
-    } else if (result.cancelled) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Checkout cancelled.')),
-      );
-    } else {
-      messenger.showSnackBar(
-        SnackBar(content: Text(result.message ?? 'Checkout failed.')),
-      );
-    }
-  }
-
   /// Centralized handler for taps on the GenerationStatusBoard rows.
-  /// Dispatches based on [artifactKey] and current [project] state.
+/// Dispatches based on [artifactKey] and current [project] state.
+///
+/// v37+: once a project has ever been started, the first click is
+/// what creates it; subsequent clicks never re-trigger generation.
+/// That keeps the "tap to generate" promise honest — the user spends
+/// their one free generation on the first click, and from then on
+/// taps simply open the existing artifact (or, for a failed run
+/// with no assets, surface the failure instead of silently starting
+/// another run).
   Future<void> _handleStatusBoardTap(String artifactKey, Project? project) async {
     switch (artifactKey) {
       case 'logo':
-        // Tapping a ready row opens the preview; a not-started or failed
-        // row (re)starts generation via the parent so this screen's own
-        // polling picks it up and reveals the kit when it lands.
+        // Logo is intentionally exempt from the "never restart" rule:
+        // a failed logo has no asset to view, so retry is the only
+        // useful action. First click starts the run, second click
+        // (after ready) opens the preview, any subsequent tap on a
+        // failed row retries.
         if (project != null && project.isReady) {
           await openProjectPreview(context, widget.apiClient, project);
         } else if (project == null || project.isFailed) {
           await _beginLogoGeneration();
         }
         return;
-      case 'colors':
-        await _showStaticPreview(
-          context,
-          title: 'Signature palette',
-          body: _ColorsDetailBody(profile: _profile),
-        );
-        return;
-      case 'typography':
-        await _showStaticPreview(
-          context,
-          title: 'Type system',
-          body: _TypographyDetailBody(profile: _profile),
-        );
-        return;
       case 'carousel':
-        if (project != null && project.isReady) {
-          await openProjectPreview(context, widget.apiClient, project);
-        } else if (project != null && project.isInProgress) {
-          // Already running; just give the user feedback.
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Carousel is already generating.')),
-          );
-        } else {
-          // Not started, or previously failed. Either way, kick off
-          // (the API will return 429 if rate-limited).
+        if (project == null) {
+          // First tap ever for this profile — kick off the run.
           await startCarouselGeneration(
             context: context,
             apiClient: widget.apiClient,
             businessProfileId: widget.businessProfileId,
           );
-          // The status board polls every 3s and will pick up the new
-          // project automatically.
+        } else if (project.isReady && project.assets.isNotEmpty) {
+          await openProjectPreview(context, widget.apiClient, project);
+        } else if (project.isInProgress) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Carousel is still generating.')),
+          );
+        } else {
+          // Failed (with or without assets). Don't restart — surface
+          // the artifact if any, otherwise the failure state. Tapping
+          // again should not silently start a new run.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                project.assets.isNotEmpty
+                    ? 'Carousel generation finished with partial assets — opening what we have.'
+                    : 'Carousel generation failed. Open the brand kit to retry.',
+              ),
+            ),
+          );
         }
         return;
       case 'film':
-        if (project != null && project.isReady) {
-          await openProjectPreview(context, widget.apiClient, project);
-        } else if (project != null && project.isInProgress) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Film is already generating.')),
-          );
-        } else {
+        if (project == null) {
           await startFilmGeneration(
             context: context,
             apiClient: widget.apiClient,
             businessProfileId: widget.businessProfileId,
           );
+        } else if (project.isReady && project.assets.isNotEmpty) {
+          await openProjectPreview(context, widget.apiClient, project);
+        } else if (project.isInProgress) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Film is still generating.')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                project.assets.isNotEmpty
+                    ? 'Film generation finished with partial assets — opening what we have.'
+                    : 'Film generation failed. Open the brand kit to retry.',
+              ),
+            ),
+          );
         }
+        return;
+      case 'website':
+        // v37: website is a paid feature. Tap routes to the new
+        // pricing screen so the user can pick a plan.
+        await _openPricingScreen();
         return;
     }
   }
 
-  /// Generic full-screen preview used by static tiles (colors, typography)
-  /// that don't have a real generation behind them yet. Renders the
-  /// supplied [body] widget against the Tamiva background.
+  /// Pushes the new Pricing screen. Used by the Upgrade button and by
+  /// the Website tile (locked feature).
+  Future<void> _openPricingScreen() async {
+    final upgraded = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => PricingScreen(
+          apiClient: widget.apiClient,
+        ),
+      ),
+    );
+    if (upgraded == true && mounted) {
+      // Refresh tier + rebuild so any paid-only UI unlocks immediately.
+      await _refreshTier();
+    }
+  }
+
+  /// Generic full-screen preview kept for forward compatibility with
+  /// future Pro-only static tiles (e.g. brand strategy doc). Currently
+  /// unused — callers should use [PricingScreen] for paid upgrades.
+  // ignore: unused_element
   Future<void> _showStaticPreview(
     BuildContext context, {
     required String title,
@@ -421,7 +417,9 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   }
 
   bool get _logoReady => _project != null && _project!.isReady && _project!.assets.isNotEmpty;
-  bool get _isPro => _tier == 'pro';
+
+  /// v37: any paid tier unlocks Pro features.
+  bool get _isPaid => _tier != 'free' && _tier.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -431,17 +429,52 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
           ? 'Your brand kit'
           : 'Generating your brand…',
       actions: [LogoutAction(apiClient: widget.apiClient)],
-      bottomBar: _isPro
-          ? null
-          : SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-                child: GradientCtaButton(
-                  onPressed: _startProCheckout,
-                  child: const Text('Upgrade to Tamiva Pro · ₹5000/mo'),
+      bottomBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ArtifactsScreen(
+                          apiClient: widget.apiClient,
+                          businessProfileId: widget.businessProfileId,
+                        ),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: TamivaColors.gold),
+                    foregroundColor: TamivaColors.gold,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(TamivaRadii.sm),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  child: const Text('Artifacts'),
                 ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _isPaid
+                    ? const SizedBox.shrink()
+                    : GradientCtaButton(
+                        onPressed: _openPricingScreen,
+                        child: const Text('Upgrade to Tamiva Pro'),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
       body: _buildBody(context),
     );
   }
@@ -573,56 +606,36 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
           const SizedBox(height: 28),
           _BrandKitSection(
             title: 'Logo',
-            hiddenCount: 3,
+            hiddenCount: 0,
             frontChild: _LogoPreview(project: _project),
             onFrontTap: _project != null && _project!.isReady
                 ? () => openProjectPreview(context, widget.apiClient, _project!)
                 : null,
-            onLockedTap: _showComingSoon,
-          ),
-          const SizedBox(height: 28),
-          _BrandKitSection(
-            title: 'Brand colors',
-            hiddenCount: 4,
-            frontChild: _ColorsPreview(profile: _profile),
-            onFrontTap: () => _showStaticPreview(
-              context,
-              title: 'Signature palette',
-              body: _ColorsDetailBody(profile: _profile),
-            ),
-            onLockedTap: _showComingSoon,
-          ),
-          const SizedBox(height: 28),
-          _BrandKitSection(
-            title: 'Typography',
-            hiddenCount: 4,
-            frontChild: _TypographyPreview(profile: _profile),
-            onFrontTap: () => _showStaticPreview(
-              context,
-              title: 'Type system',
-              body: _TypographyDetailBody(profile: _profile),
-            ),
-            onLockedTap: _showComingSoon,
           ),
           const SizedBox(height: 28),
           _BrandKitSection(
             title: 'Social carousel',
-            hiddenCount: 5,
+            hiddenCount: 0,
             frontChild: _CarouselPreview(
               apiClient: widget.apiClient,
               businessProfileId: widget.businessProfileId,
             ),
-            onLockedTap: _showComingSoon,
           ),
           const SizedBox(height: 28),
           _BrandKitSection(
             title: '10-sec brand film',
-            hiddenCount: 2,
+            hiddenCount: 0,
             frontChild: _FilmPreview(
               apiClient: widget.apiClient,
               businessProfileId: widget.businessProfileId,
             ),
-            onLockedTap: _showComingSoon,
+          ),
+          const SizedBox(height: 28),
+          _BrandKitSection(
+            title: 'Website',
+            hiddenCount: 0,
+            frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
+            onFrontTap: _openPricingScreen,
           ),
           const SizedBox(height: 40),
         ],
@@ -716,136 +729,255 @@ class _LogoPreview extends StatelessWidget {
   }
 }
 
-/// Resolves the palettes the user picked at signup (CSV of keys) into
-/// [PaletteStyle]s. Falls back to the default warm palette if none set.
-List<PaletteStyle> _resolvePalettes(BusinessProfile? profile) {
-  final keys = (profile?.palettePreference ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-  return keys.isEmpty
-      ? const [PaletteStyles.warm]
-      : keys.map(PaletteStyles.byKey).toList();
-}
-
-/// Resolves the font pairs the user picked at signup into [FontPair]s.
-/// Falls back to the modern default if none set.
-List<FontPair> _resolveFonts(BusinessProfile? profile) {
-  final keys = (profile?.fontPreference ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-  return keys.isEmpty
-      ? const [FontPairs.modernDefault]
-      : keys.map(FontPairs.byKey).toList();
-}
-
-/// The user's brand name for type previews, with a safe fallback.
-String _brandName(BusinessProfile? profile) {
-  final name = (profile?.name ?? '').trim();
-  return name.isEmpty ? 'Your Brand' : name;
-}
-
-class _ColorsPreview extends StatelessWidget {
-  final BusinessProfile? profile;
-  const _ColorsPreview({this.profile});
+/// v37: Locked placeholder shown in the Website _BrandKitSection.
+/// Tapping anywhere on it opens the Pricing screen.
+class _WebsiteLockedPreview extends StatelessWidget {
+  const _WebsiteLockedPreview();
 
   @override
   Widget build(BuildContext context) {
-    final palettes = _resolvePalettes(profile);
-    final hexes = palettes.expand((p) => p.hexCodes).toList();
-    final label = palettes
-        .map((p) => p.displayName.split('(').first.trim())
-        .join(' · ');
     return Container(
       color: TamivaColors.surface,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Row(
-            children: [
-              for (final hex in hexes) ...[
-                Expanded(
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: _hexToColor(hex),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: TamivaColors.divider),
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: TamivaColors.gold.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(TamivaRadii.sm),
+              border: Border.all(color: TamivaColors.gold.withOpacity(0.4)),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(
+              Icons.language,
+              color: TamivaColors.gold,
+              size: 28,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'AI Website',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tap to choose a plan',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: TamivaColors.gold,
                       ),
-                    ),
-                  ),
                 ),
-                const SizedBox(width: 8),
               ],
-            ],
+            ),
           ),
-          const SizedBox(height: 14),
-          Text(
-            label.isEmpty ? 'Signature palette' : label,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: TamivaColors.textSecondary,
-                  fontWeight: FontWeight.w600,
-                ),
-          ),
+          const Icon(Icons.lock_outline, color: TamivaColors.gold, size: 20),
         ],
       ),
     );
   }
 }
 
-class _TypographyPreview extends StatelessWidget {
-  final BusinessProfile? profile;
-  const _TypographyPreview({this.profile});
+/// v37: hero artwork for the Website _BrandKitSection. The asset
+/// is rendered 2x the visible tile height and translated from y=0
+/// down to y=-tileHeight on a continuous loop — a slow vertical
+/// pan that gives the locked tile a "living" feel before the user
+/// taps to enter the pricing flow.
+///
+/// The animation only runs while the widget is mounted. On tap the
+/// controller freezes (so the user lands on the frame they tapped),
+/// and [onTap] is fired so the brand kit can route to Pricing.
+///
+/// If the asset isn't on disk (e.g. a developer machine before the
+/// asset is bundled), the widget degrades gracefully to a static
+/// placeholder — no pan, no crash.
+class _WebsiteRollingPreview extends StatefulWidget {
+  final VoidCallback onTap;
+  const _WebsiteRollingPreview({required this.onTap});
+
+  @override
+  State<_WebsiteRollingPreview> createState() => _WebsiteRollingPreviewState();
+}
+
+class _WebsiteRollingPreviewState extends State<_WebsiteRollingPreview>
+    with SingleTickerProviderStateMixin {
+  static const String _assetPath = 'assets/hero/website_preview.png';
+
+  /// Tile height matches CascadedStack's default so the rolling
+  /// frame fits the brand kit layout.
+  static const double _tileHeight = 180;
+
+  /// Time the artwork takes to pan from top to bottom once. Long
+  /// enough to feel calm, short enough that a tap-watcher actually
+  /// sees motion.
+  static const Duration _cycleDuration = Duration(seconds: 18);
+
+  /// The artwork is rendered at 2x the tile height; we pan through
+  /// one full tile height so the visible area cycles through
+  /// previously-hidden content and back. A full 2x-height pan
+  /// would leave blank space at the bottom of the tile for half
+  /// the cycle; the 1x pan keeps the visual tile full at all
+  /// times.
+  static const double _panDistance = 180;
+
+  late final AnimationController _controller;
+  bool _imageFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: _cycleDuration)
+      ..addStatusListener((status) {
+        // Loop the pan seamlessly: forward = top-to-bottom, reverse
+        // = bottom-to-top. A forward-only loop would snap the asset
+        // back to y=0 and look jarring. Reversing gives a smooth
+        // continuous motion the user reads as "scrolling".
+        if (status == AnimationStatus.completed) {
+          _controller.reverse();
+        } else if (status == AnimationStatus.dismissed) {
+          _controller.forward();
+        }
+      })
+      ..forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// Stop the rolling motion in place. After this, the controller
+  /// is held at whatever value it was at when the user tapped, so
+  /// the user lands on the exact frame they were looking at.
+  void _stopAndTap() {
+    if (_controller.isAnimating) {
+      _controller.stop();
+    }
+    widget.onTap();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final fonts = _resolveFonts(profile);
-    final primary = fonts.first;
-    final brand = _brandName(profile);
-    return Container(
-      color: TamivaColors.surface,
-      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            brand,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.getFont(
-              primary.googleFamily,
-              fontSize: 34,
-              fontWeight: FontWeight.w600,
-              color: TamivaColors.textPrimary,
-            ),
+    // Static fallback: the asset isn't bundled. Render a clean
+    // placeholder that still routes to Pricing on tap.
+    if (_imageFailed) {
+      return GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          color: TamivaColors.surface,
+          alignment: Alignment.center,
+          child: Text(
+            'Tap to choose a plan',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: TamivaColors.gold,
+                ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            '${primary.displayName} · ${primary.googleFamily}',
-            style: textTheme.bodyMedium?.copyWith(color: TamivaColors.gold),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: _stopAndTap,
+      behavior: HitTestBehavior.opaque,
+      child: ClipRect(
+        child: SizedBox(
+          height: _tileHeight,
+          width: double.infinity,
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (_, __) {
+              // Forward (0..1): y goes 0 -> -panDistance.
+              // Reverse (1..0): y goes -panDistance -> 0.
+              // Linear easing keeps the motion predictable.
+              final dy = -_panDistance * _controller.value;
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  // The translated artwork. We give it 2x tile height
+                  // so that during the forward half-cycle we reveal
+                  // content that was below the original viewport,
+                  // and during the reverse half-cycle we slide back
+                  // up. Using fitWidth keeps the image at the tile's
+                  // full width and lets the intrinsic aspect ratio
+                  // determine the rendered height; the [height]
+                  // override is a defensive minimum.
+                  Transform.translate(
+                    offset: Offset(0, dy),
+                    child: Image.asset(
+                      _assetPath,
+                      fit: BoxFit.fitWidth,
+                      width: double.infinity,
+                      errorBuilder: (_, __, ___) {
+                        // The bundle resolved the path but decoding
+                        // failed (missing/corrupt asset). Flip to
+                        // the static fallback on the next frame.
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) setState(() => _imageFailed = true);
+                        });
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                  ),
+                  // Bottom scrim so the overlay text reads cleanly
+                  // over any part of the image.
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      height: 56,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.55),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 14,
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.touch_app_outlined,
+                          color: TamivaColors.gold,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Tap to choose a plan',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(
+                                  color: TamivaColors.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
-          if (fonts.length > 1) ...[
-            const SizedBox(height: 10),
-            Text(
-              brand,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.getFont(
-                fonts[1].googleFamily,
-                fontSize: 22,
-                color: TamivaColors.textSecondary,
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -1042,15 +1174,40 @@ class _CarouselPreview extends StatefulWidget {
 }
 
 class _CarouselPreviewState extends State<_CarouselPreview> {
+  /// State machine:
+  ///   Idle (no project) ──tap──▶ Starting ──success──▶ InProgress
+  ///                                                       │
+  ///                                                       ├─ready──▶ Ready (terminal; taps open viewer only)
+  ///                                                       └─failed─▶ FailedRetryable (until cap reached)
+  ///                                                          │
+  ///                                                          └─cap reached──▶ LockedSupport (terminal)
+  ///
+  /// Taps while [_requestInFlight] is true are dropped silently — the
+  /// first click is the one that creates the artifact, and any
+  /// double-tap before the backend has answered is a no-op (no
+  /// SnackBar, no duplicate request).
   Project? _project;
   Timer? _pollTimer;
-  bool _starting = false;
-  UserFacingError? _startError;
+  bool _requestInFlight = false;
+  /// Number of user-visible attempts that have been started. Bumps on
+  /// both start-call failures and poll-reported failures. Cleared on
+  /// a successful ready state (because once the user has an artifact,
+  /// the cap becomes irrelevant — subsequent taps just open it).
+  int _attempts = 0;
+  /// Hard cap on retry attempts. After this many failed attempts the
+  /// tile locks behind a "Contact support" message with no
+  /// tap-to-retry. See [_CarouselSupportLockTile].
+  static const int _maxAttempts = 3;
+  /// Set true the first time we see a project in the ready state.
+  /// Once set, never re-enter the generation path.
+  bool _everSucceeded = false;
 
   @override
   void initState() {
     super.initState();
-    // v36 / S2.13 — adopt an in-flight carousel on re-entry.
+    // v36 / S2.13 — adopt an in-flight carousel on re-entry. If the
+    // backend already has a project for this profile (success or
+    // failure), seed our state from it.
     _bootstrapFromExistingProject();
   }
 
@@ -1060,12 +1217,40 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
           .getBusinessProfileProjects(widget.businessProfileId);
       if (!mounted) return;
       final carousel = projects.carousel;
-      if (carousel != null &&
-          (carousel.isInProgress || carousel.isFailed)) {
-        _startPolling(carousel.id, seed: carousel);
-      }
+      if (carousel == null) return;
+      _seedFromServerProject(carousel);
     } catch (_) {
       // best-effort
+    }
+  }
+
+  /// Bring the local state machine in line with whatever the server
+  /// already has. Idempotent; safe to call on every mount.
+  void _seedFromServerProject(Project carousel) {
+    if (carousel.isReady && carousel.assets.isNotEmpty) {
+      setState(() {
+        _project = carousel;
+        _everSucceeded = true;
+        // A ready project on the server means at least one attempt
+        // already succeeded, so we treat attempts as "consumed but
+        // irrelevant" — subsequent taps will just open the viewer.
+      });
+      return;
+    }
+    if (carousel.isFailed) {
+      setState(() {
+        _project = carousel;
+        // Don't auto-bump attempts here — we don't know how many
+        // prior attempts the user burned before this failed one.
+        // The cap is enforced when the *next* tap happens; the
+        // failed tile gives the user a chance to retry up to
+        // _maxAttempts, and the cap locks after that.
+      });
+      return;
+    }
+    if (carousel.isInProgress) {
+      // Adopt the in-flight run so we can poll for its result.
+      _startPolling(carousel.id, seed: carousel);
     }
   }
 
@@ -1075,17 +1260,90 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
     super.dispose();
   }
 
+  /// True while a generation request is in flight to the backend, OR
+  /// while a started project is still queued / generating. The build
+  /// method uses this to decide between a spinner and a placeholder.
+  bool get _isGenerating =>
+      _requestInFlight || (_project?.isInProgress ?? false);
+
+  /// True once the user has hit the retry cap with no success.
+  /// The tile then renders a non-tappable support-lock state.
+  bool get _isLockedBehindSupport =>
+      !_everSucceeded &&
+      _project != null &&
+      _project!.isFailed &&
+      _attempts >= _maxAttempts;
+
   Future<void> _onTap() async {
-    if (_project?.isReady == true) {
+    // ── 1. Once we've ever succeeded, taps are pure navigation.
+    if (_everSucceeded) {
+      if (_project != null && _project!.assets.isNotEmpty) {
+        await _openFullScreenViewer(context);
+      }
+      return;
+    }
+
+    // ── 2. Tap during an in-flight request: drop silently. The user
+    //     already triggered a generation; the backend is the source
+    //     of truth and we don't want duplicate work.
+    if (_isGenerating) return;
+
+    // ── 3. Hit the cap without ever succeeding: lock the tile.
+    if (_isLockedBehindSupport) return;
+
+    // ── 4. Project ready with assets: open it (defensive — handled
+    //     above by _everSucceeded too).
+    if (_project != null && _project!.assets.isNotEmpty) {
       await _openFullScreenViewer(context);
       return;
     }
-    final projectId = await startCarouselGeneration(
-      context: context,
-      apiClient: widget.apiClient,
-      businessProfileId: widget.businessProfileId,
-    );
-    if (projectId == null) return; // user cancelled or it failed
+
+    // ── 5. Project exists but failed: open the partial assets if any,
+    //     otherwise start a new attempt.
+    if (_project != null && _project!.isFailed) {
+      if (_project!.assets.isNotEmpty) {
+        await _openFullScreenViewer(context);
+        return;
+      }
+      // else: fall through to start a new attempt.
+    }
+
+    // ── 6. First tap (no project yet) OR a retry after a failed run
+    //     with no assets. Fire the start call.
+    await _startGenerationAttempt();
+  }
+
+  /// Fires a single startCarouselGeneration request, wires the result
+  /// into our state machine, and bumps the attempt counter. Never
+  /// throws — all errors are surfaced via [_project] + [_attempts].
+  Future<void> _startGenerationAttempt() async {
+    if (_requestInFlight) return;
+    setState(() {
+      _requestInFlight = true;
+      _attempts += 1;
+    });
+    String? projectId;
+    try {
+      projectId = await startCarouselGeneration(
+        context: context,
+        apiClient: widget.apiClient,
+        businessProfileId: widget.businessProfileId,
+      );
+    } catch (_) {
+      // startCarouselGeneration itself already surfaced a SnackBar
+      // and returned null. We've already bumped _attempts; the
+      // build() method will pick that up.
+    }
+    if (!mounted) {
+      // Widget disposed mid-request. Don't touch state.
+      return;
+    }
+    setState(() => _requestInFlight = false);
+    if (projectId == null) {
+      // User cancelled OR the start call failed. Either way, nothing
+      // to poll. The _attempts counter is already bumped.
+      return;
+    }
     _startPolling(projectId);
   }
 
@@ -1106,12 +1364,19 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
     try {
       final project = await widget.apiClient.getProject(projectId);
       if (!mounted) return;
-      setState(() => _project = project);
-      if (project.isReady || project.isFailed) {
+      // If the project became ready with assets, lock the success flag
+      // so subsequent taps can never re-enter the generation path.
+      final succeeded = project.isReady && project.assets.isNotEmpty;
+      final failed = project.isFailed;
+      setState(() {
+        _project = project;
+        if (succeeded) _everSucceeded = true;
+      });
+      if (succeeded || failed) {
         _pollTimer?.cancel();
       }
     } catch (_) {
-      // transient
+      // transient — keep polling
     }
   }
 
@@ -1129,20 +1394,37 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
 
   @override
   Widget build(BuildContext context) {
-    if (_startError != null) {
-      return _ErrorTile(error: _startError!, onRetry: _onTap);
-    }
-    if (_starting || (_project?.isInProgress ?? false)) {
+    // Generate (in-flight request or queued / generating project).
+    if (_isGenerating) {
       return const _GeneratingTile(
         label: 'Rendering your carousel…',
         eta: Duration(seconds: 90),
       );
     }
-    if (_project?.isReady == true) {
+    // Ready: show the artifact. The success flag is sticky; once set,
+    // we never leave this branch unless the widget is unmounted.
+    if (_everSucceeded && _project != null && _project!.assets.isNotEmpty) {
       final assets = (_project!.assets.toList()
         ..sort((a, b) => (a.slideIndex ?? 0).compareTo(b.slideIndex ?? 0)));
-      return _CarouselReadyPreview(assets: assets, onTap: () => _openFullScreenViewer(context));
+      return _CarouselReadyPreview(
+        assets: assets,
+        onTap: () => _openFullScreenViewer(context),
+      );
     }
+    // Cap reached without any success: lock the tile.
+    if (_isLockedBehindSupport) {
+      return const _CarouselSupportLockTile();
+    }
+    // Failed but still under the cap: tap to retry. The tile copy
+    // surfaces how many attempts are left.
+    if (_project != null && _project!.isFailed) {
+      return GestureDetector(
+        onTap: _onTap,
+        behavior: HitTestBehavior.opaque,
+        child: _CarouselFailedTile(attemptsLeft: _maxAttempts - _attempts),
+      );
+    }
+    // No project yet — the "first tap creates the artifact" entry point.
     return GestureDetector(
       onTap: _onTap,
       behavior: HitTestBehavior.opaque,
@@ -1228,6 +1510,100 @@ class _CarouselPlaceholder extends StatelessWidget {
                     ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// v37: shown when a carousel project exists but failed with no
+/// recoverable assets. Tapping surfaces the failure via SnackBar —
+/// the second tap on a failed run does NOT start a new generation.
+class _CarouselFailedTile extends StatelessWidget {
+  /// Number of generation attempts still available. Shown so the user
+  /// knows how many taps remain before the tile locks.
+  final int attemptsLeft;
+  const _CarouselFailedTile({required this.attemptsLeft});
+
+  @override
+  Widget build(BuildContext context) {
+    final remainingLabel = attemptsLeft > 0
+        ? 'Tap to retry · $attemptsLeft attempt${attemptsLeft == 1 ? '' : 's'} left'
+        : 'Tap to retry';
+    return Container(
+      color: TamivaColors.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            color: TamivaColors.error,
+            size: 26,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Carousel generation failed',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  remainingLabel,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: TamivaColors.textSecondary,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// v37: shown after the user has burned through the retry cap with
+/// no successful generation. Pure read-only — no tap handler — so
+/// further taps cannot re-enter the generation path.
+class _CarouselSupportLockTile extends StatelessWidget {
+  const _CarouselSupportLockTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: TamivaColors.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.support_agent_outlined,
+            color: TamivaColors.gold,
+            size: 26,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'We couldn\'t generate this carousel',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tap support in the app menu to get help. We\'ll start a fresh run once we hear back.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: TamivaColors.textSecondary,
+                      ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1358,10 +1734,16 @@ class _FilmPreview extends StatefulWidget {
 }
 
 class _FilmPreviewState extends State<_FilmPreview> {
+  /// Mirrors [_CarouselPreviewState] — see the docstring there for
+  /// the full state machine. Taps during an in-flight request are
+  /// dropped silently. Once a successful artifact exists, taps
+  /// only open the viewer.
   Project? _project;
   Timer? _pollTimer;
-  bool _starting = false;
-  UserFacingError? _startError;
+  bool _requestInFlight = false;
+  int _attempts = 0;
+  static const int _maxAttempts = 3;
+  bool _everSucceeded = false;
 
   @override
   void initState() {
@@ -1376,12 +1758,27 @@ class _FilmPreviewState extends State<_FilmPreview> {
           .getBusinessProfileProjects(widget.businessProfileId);
       if (!mounted) return;
       final video = projects.video;
-      if (video != null &&
-          (video.isInProgress || video.isFailed)) {
-        _startPolling(video.id, seed: video);
-      }
+      if (video == null) return;
+      _seedFromServerProject(video);
     } catch (_) {
       // best-effort
+    }
+  }
+
+  void _seedFromServerProject(Project video) {
+    if (video.isReady && video.assets.isNotEmpty) {
+      setState(() {
+        _project = video;
+        _everSucceeded = true;
+      });
+      return;
+    }
+    if (video.isFailed) {
+      setState(() => _project = video);
+      return;
+    }
+    if (video.isInProgress) {
+      _startPolling(video.id, seed: video);
     }
   }
 
@@ -1391,17 +1788,70 @@ class _FilmPreviewState extends State<_FilmPreview> {
     super.dispose();
   }
 
+  bool get _isGenerating =>
+      _requestInFlight || (_project?.isInProgress ?? false);
+
+  bool get _isLockedBehindSupport =>
+      !_everSucceeded &&
+      _project != null &&
+      _project!.isFailed &&
+      _attempts >= _maxAttempts;
+
   Future<void> _onTap() async {
-    if (_project?.isReady == true) {
+    // ── 1. Once we've ever succeeded, taps are pure navigation.
+    if (_everSucceeded) {
+      if (_project != null && _project!.assets.isNotEmpty) {
+        await _openFullScreenViewer(context);
+      }
+      return;
+    }
+
+    // ── 2. Tap during an in-flight request: drop silently.
+    if (_isGenerating) return;
+
+    // ── 3. Hit the cap without ever succeeding: lock the tile.
+    if (_isLockedBehindSupport) return;
+
+    // ── 4. Project ready with assets: open it.
+    if (_project != null && _project!.assets.isNotEmpty) {
       await _openFullScreenViewer(context);
       return;
     }
-    final projectId = await startFilmGeneration(
-      context: context,
-      apiClient: widget.apiClient,
-      businessProfileId: widget.businessProfileId,
-    );
-    if (projectId == null) return; // user cancelled or it failed
+
+    // ── 5. Project exists but failed: open partial assets if any,
+    //     otherwise start a new attempt.
+    if (_project != null && _project!.isFailed) {
+      if (_project!.assets.isNotEmpty) {
+        await _openFullScreenViewer(context);
+        return;
+      }
+    }
+
+    // ── 6. First tap (no project yet) OR a retry after a failed run
+    //     with no assets. Fire the start call.
+    await _startGenerationAttempt();
+  }
+
+  Future<void> _startGenerationAttempt() async {
+    if (_requestInFlight) return;
+    setState(() {
+      _requestInFlight = true;
+      _attempts += 1;
+    });
+    String? projectId;
+    try {
+      projectId = await startFilmGeneration(
+        context: context,
+        apiClient: widget.apiClient,
+        businessProfileId: widget.businessProfileId,
+      );
+    } catch (_) {
+      // startFilmGeneration surfaces its own SnackBar; counter is
+      // already bumped for the build() method to pick up.
+    }
+    if (!mounted) return;
+    setState(() => _requestInFlight = false);
+    if (projectId == null) return;
     _startPolling(projectId);
   }
 
@@ -1422,8 +1872,13 @@ class _FilmPreviewState extends State<_FilmPreview> {
     try {
       final project = await widget.apiClient.getProject(projectId);
       if (!mounted) return;
-      setState(() => _project = project);
-      if (project.isReady || project.isFailed) {
+      final succeeded = project.isReady && project.assets.isNotEmpty;
+      final failed = project.isFailed;
+      setState(() {
+        _project = project;
+        if (succeeded) _everSucceeded = true;
+      });
+      if (succeeded || failed) {
         _pollTimer?.cancel();
       }
     } catch (_) {
@@ -1443,777 +1898,16 @@ class _FilmPreviewState extends State<_FilmPreview> {
 
   @override
   Widget build(BuildContext context) {
-    if (_startError != null) {
-      return _ErrorTile(error: _startError!, onRetry: _onTap);
-    }
-    if (_starting || (_project?.isInProgress ?? false)) {
+    if (_isGenerating) {
       return const _GeneratingTile(
         label: 'Shooting your brand film…',
         eta: Duration(seconds: 60),
       );
     }
-    if (_project?.isReady == true && _project!.assets.isNotEmpty) {
+    if (_everSucceeded && _project != null && _project!.assets.isNotEmpty) {
       return _FilmReadyPreview(
         asset: _project!.assets.first,
         onTap: () => _openFullScreenViewer(context),
       );
     }
-    return GestureDetector(
-      onTap: _onTap,
-      behavior: HitTestBehavior.opaque,
-      child: const _FilmPlaceholder(),
-    );
-  }
-}
-
-class _FilmPlaceholder extends StatelessWidget {
-  const _FilmPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [TamivaColors.maroon, TamivaColors.background, TamivaColors.ember],
-          stops: [0, 0.55, 1],
-        ),
-      ),
-      child: Stack(
-        children: [
-          Center(
-            child: Container(
-              width: 66,
-              height: 66,
-              decoration: BoxDecoration(
-                color: TamivaColors.background.withOpacity(0.6),
-                shape: BoxShape.circle,
-                border: Border.all(color: TamivaColors.gold, width: 1.5),
-              ),
-              child: const Icon(
-                Icons.play_arrow,
-                color: TamivaColors.gold,
-                size: 34,
-              ),
-            ),
-          ),
-          Positioned(
-            left: 16,
-            bottom: 14,
-            right: 16,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '10-sec cinematic opener',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: TamivaColors.textPrimary,
-                      ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Golden hour · warm color grade',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: TamivaColors.textSecondary,
-                      ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    const Icon(Icons.auto_awesome, size: 12, color: TamivaColors.gold),
-                    const SizedBox(width: 5),
-                    Text(
-                      'Tap to generate · est. ₹60–100',
-                      style: Theme.of(context).textTheme.labelMedium,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FilmReadyPreview extends StatelessWidget {
-  final ProjectAsset asset;
-  final VoidCallback onTap;
-  const _FilmReadyPreview({required this.asset, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox.expand(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            NetImage(
-              imageUrl: asset.url,
-              fit: BoxFit.cover,
-              placeholder: (_, __) => const Center(
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              errorWidget: (_, __, ___) => Container(
-                color: TamivaColors.background,
-                child: const Icon(Icons.broken_image, color: TamivaColors.textFaint),
-              ),
-            ),
-            Container(color: Colors.black.withOpacity(0.18)),
-            Center(
-              child: Container(
-                width: 66,
-                height: 66,
-                decoration: BoxDecoration(
-                  color: TamivaColors.background.withOpacity(0.6),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: TamivaColors.gold, width: 1.5),
-                ),
-                child: const Icon(
-                  Icons.play_arrow,
-                  color: TamivaColors.gold,
-                  size: 34,
-                ),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              bottom: 14,
-              right: 16,
-              child: Row(
-                children: [
-                  const Icon(Icons.movie_creation_outlined, size: 14, color: TamivaColors.gold),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Your 8-sec film · tap to view',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: TamivaColors.textPrimary,
-                        ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Reusable helpers - generating state, error tile, confirmation dialog.
-
-class _GeneratingTile extends StatelessWidget {
-  final String label;
-  final Duration eta;
-  const _GeneratingTile({required this.label, required this.eta});
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: TamivaColors.surface,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              height: 28,
-              width: 28,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: TamivaColors.textSecondary),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              eta.inSeconds < 60
-                  ? '~${eta.inSeconds}s left'
-                  : '~${(eta.inSeconds / 60).round()} min left',
-              style: const TextStyle(fontSize: 10, color: TamivaColors.textFaint),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorTile extends StatelessWidget {
-  final UserFacingError error;
-  final VoidCallback onRetry;
-  const _ErrorTile({required this.error, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onRetry,
-      behavior: HitTestBehavior.opaque,
-      child: ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.refresh, color: TamivaColors.gold, size: 24),
-                const SizedBox(height: 8),
-                Text(
-                  error.message,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12, color: TamivaColors.textSecondary),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Tap to retry',
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Full-screen viewers (post-generation).
-
-class _CarouselViewerScreen extends StatefulWidget {
-  final List<ProjectAsset> assets;
-  const _CarouselViewerScreen({required this.assets});
-
-  @override
-  State<_CarouselViewerScreen> createState() => _CarouselViewerScreenState();
-}
-
-class _CarouselViewerScreenState extends State<_CarouselViewerScreen> {
-  final PageController _controller = PageController();
-  int _index = 0;
-  bool _savingAll = false;
-
-  static const _roles = ['Hook', 'Problem', 'Vision', 'Product', 'CTA'];
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  /// v36 / S3.17 — save every slide in parallel. Saves the user 5 taps
-  /// and gives them a single success/failure SnackBar at the end.
-  Future<void> _saveAll() async {
-    if (_savingAll) return;
-    setState(() => _savingAll = true);
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      const SnackBar(
-        content: Text('Saving all slides to your gallery…'),
-        duration: Duration(seconds: 1),
-      ),
-    );
-    final urls = widget.assets.map((a) => a.url).toList();
-    final results = await Future.wait(urls.map((u) => saveImageToGallery(u)));
-    if (!mounted) return;
-    final failed =
-        results.where((r) => !r.ok).map((r) => r.error).toList();
-    messenger.hideCurrentSnackBar();
-    if (failed.isEmpty) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('All slides saved to your gallery.')),
-      );
-    } else if (failed.length == urls.length) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(failed.first ?? "Couldn't save.")),
-      );
-    } else {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            'Saved ${urls.length - failed.length} of ${urls.length} slides.',
-          ),
-        ),
-      );
-    }
-    setState(() => _savingAll = false);
-  }
-
-  Future<void> _shareCurrent() async {
-    final url = widget.assets[_index].url;
-    await ShareService.shareImageUrl(
-      url,
-      name:
-          'tamiva-carousel-${_index + 1}-${_roles[_index.clamp(0, _roles.length - 1)].toLowerCase()}.png',
-      text: 'Slide ${_index + 1} of my Tamiva carousel',
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: TamivaColors.background,
-      appBar: AppBar(
-        title: Text(
-          '${_index + 1} / ${widget.assets.length} - ${_roles[_index.clamp(0, _roles.length - 1)]}',
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            tooltip: 'Share slide',
-            onPressed: _shareCurrent,
-          ),
-          IconButton(
-            icon: const Icon(Icons.save_alt_rounded),
-            tooltip: 'Save all slides',
-            onPressed: _savingAll ? null : _saveAll,
-          ),
-          IconButton(
-            icon: const Icon(Icons.download_rounded),
-            tooltip: 'Save slide to gallery',
-            onPressed: () =>
-                _downloadImageAsset(context, widget.assets[_index].url),
-          ),
-        ],
-      ),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: widget.assets.length,
-        onPageChanged: (i) => setState(() => _index = i),
-        itemBuilder: (_, i) {
-          final a = widget.assets[i];
-          return Padding(
-            padding: const EdgeInsets.all(20),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(TamivaRadii.md),
-              child: NetImage(
-                imageUrl: a.url,
-                fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-                errorWidget: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image, color: TamivaColors.textFaint, size: 32),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _FilmViewerScreen extends StatefulWidget {
-  final ProjectAsset asset;
-  const _FilmViewerScreen({required this.asset});
-
-  @override
-  State<_FilmViewerScreen> createState() => _FilmViewerScreenState();
-}
-
-class _FilmViewerScreenState extends State<_FilmViewerScreen> {
-  // v36 / S2.11 — in-app playback via video_player.
-  VideoPlayerController? _controller;
-  bool _initializing = true;
-  String? _initError;
-
-  @override
-  void initState() {
-    super.initState();
-    _initController();
-  }
-
-  Future<void> _initController() async {
-    try {
-      final c = await FilmPlaybackService.controllerFor(widget.asset.url);
-      if (!mounted) {
-        await c.dispose();
-        return;
-      }
-      setState(() {
-        _controller = c;
-        _initializing = false;
-      });
-    } catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _initializing = false;
-        _initError = "Couldn't load the film. Try opening it in a browser.";
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _downloadFilm() async {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      const SnackBar(
-        content: Text('Downloading film…'),
-        duration: Duration(seconds: 1),
-      ),
-    );
-    final result = await FilmPlaybackService.downloadForSharing(
-      widget.asset.url,
-    );
-    if (!mounted) return;
-    messenger.hideCurrentSnackBar();
-    if (result.ok && result.bytes != null) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Film ready to share.')),
-      );
-      await ShareService.shareVideoBytes(
-        result.bytes!,
-        name: 'tamiva-film.mp4',
-        text: 'My brand film from Tamiva',
-      );
-    } else {
-      final err = result.error ?? "Couldn't save.";
-      messenger.showSnackBar(SnackBar(content: Text(err)));
-      if (err.toLowerCase().contains('settings')) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: const Text('Tap to open Settings.'),
-            action: SnackBarAction(
-              label: 'Settings',
-              onPressed: FilmPlaybackService.openAppSettings,
-            ),
-            duration: const Duration(seconds: 6),
-          ),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: TamivaColors.background,
-      appBar: AppBar(
-        title: const Text('Your brand film'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.file_download_outlined),
-            tooltip: 'Save film to gallery',
-            onPressed: _downloadFilm,
-          ),
-          IconButton(
-            icon: const Icon(Icons.open_in_new_rounded),
-            tooltip: 'Open in browser',
-            onPressed: () => _openAssetInBrowser(context, widget.asset.url),
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(TamivaRadii.md),
-                child: _buildPlayer(context),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Tap play to watch in-app, or save it to your gallery to share.',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlayer(BuildContext context) {
-    if (_initializing) {
-      return const ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-    if (_initError != null) {
-      return ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.broken_image, color: TamivaColors.textFaint, size: 36),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  _initError!,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextButton.icon(
-                onPressed: () => _openAssetInBrowser(context, widget.asset.url),
-                icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                label: const Text('Open in browser'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    final c = _controller!;
-    return ColoredBox(
-      color: Colors.black,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Center(
-            child: AspectRatio(
-              aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
-              child: VideoPlayer(c),
-            ),
-          ),
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                c.value.isPlaying ? c.pause() : c.play();
-              });
-            },
-            child: Container(
-              color: const Color(0x33000000),
-              child: Center(
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 150),
-                  opacity: c.value.isPlaying ? 0 : 1,
-                  child: const Icon(
-                    Icons.play_circle_outline,
-                    color: Colors.white,
-                    size: 80,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: VideoProgressIndicator(
-              c,
-              allowScrubbing: true,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              colors: const VideoProgressColors(
-                playedColor: TamivaColors.gold,
-                bufferedColor: Color(0x55D4A72C),
-                backgroundColor: Color(0x33FFFFFF),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Full-screen viewer for a finished logo. Swipeable across all
-/// variants if the project produced more than one.
-class _LogoViewerScreen extends StatefulWidget {
-  final List<ProjectAsset> assets;
-  const _LogoViewerScreen({required this.assets});
-
-  @override
-  State<_LogoViewerScreen> createState() => _LogoViewerScreenState();
-}
-
-class _LogoViewerScreenState extends State<_LogoViewerScreen> {
-  final PageController _controller = PageController();
-  int _index = 0;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: TamivaColors.background,
-      appBar: AppBar(
-        title: Text('${_index + 1} / ${widget.assets.length} · Logo'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            tooltip: 'Share',
-            onPressed: () => ShareService.shareImageUrl(
-              widget.assets[_index].url,
-              name: 'tamiva-logo.png',
-              text: 'My brand from Tamiva',
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Regenerate',
-            onPressed: () {
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Open the brand kit to generate a fresh logo.',
-                  ),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.download_rounded),
-            tooltip: 'Save to gallery',
-            onPressed: () =>
-                _downloadImageAsset(context, widget.assets[_index].url),
-          ),
-        ],
-      ),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: widget.assets.length,
-        onPageChanged: (i) => setState(() => _index = i),
-        itemBuilder: (_, i) {
-          final a = widget.assets[i];
-          return Padding(
-            padding: const EdgeInsets.all(20),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(TamivaRadii.md),
-              child: NetImage(
-                imageUrl: a.url,
-                fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-                errorWidget: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image,
-                      color: TamivaColors.textFaint, size: 32),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// Detailed view of the brand palette - used by the static-preview sheet
-/// when the user taps the Brand Colors tile.
-class _ColorsDetailBody extends StatelessWidget {
-  final BusinessProfile? profile;
-  const _ColorsDetailBody({this.profile});
-
-  @override
-  Widget build(BuildContext context) {
-    final palettes = _resolvePalettes(profile);
-    final swatches = <(String, String)>[];
-    for (final p in palettes) {
-      final pname = p.displayName.split('(').first.trim();
-      for (final hex in p.hexCodes) {
-        swatches.add((pname, hex));
-      }
-    }
-    final textTheme = Theme.of(context).textTheme;
-    return ListView.separated(
-      itemCount: swatches.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (_, i) {
-        final (name, hex) = swatches[i];
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: TamivaColors.surface,
-            borderRadius: BorderRadius.circular(TamivaRadii.sm),
-            border: Border.all(color: TamivaColors.divider),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: _hexToColor(hex),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: TamivaColors.divider),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: textTheme.titleMedium),
-                    const SizedBox(height: 2),
-                    Text(hex.toUpperCase(),
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: TamivaColors.textSecondary,
-                        )),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// Detailed type system view.
-class _TypographyDetailBody extends StatelessWidget {
-  final BusinessProfile? profile;
-  const _TypographyDetailBody({this.profile});
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final fonts = _resolveFonts(profile);
-    final brand = _brandName(profile);
-    return ListView(
-      children: [
-        for (final f in fonts) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Text(
-              '${f.displayName} · ${f.googleFamily}',
-              style: textTheme.labelMedium
-                  ?.copyWith(color: TamivaColors.gold),
-            ),
-          ),
-          Text(
-            brand,
-            style: GoogleFonts.getFont(
-              f.googleFamily,
-              fontSize: 32,
-              color: TamivaColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 24),
-        ],
-      ],
-    );
-  }
-}
-
-Color _hexToColor(String hex) {
-  final cleaned = hex.replaceFirst('#', '');
-  final v = int.tryParse('FF$cleaned', radix: 16);
-  return v == null ? TamivaColors.textFaint : Color(v);
-}
+    if (_isLockedBe

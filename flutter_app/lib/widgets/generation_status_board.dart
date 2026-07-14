@@ -6,17 +6,19 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/tamiva_theme.dart';
 
-/// A live status board showing each artifact (logo / colors / typography
-/// / carousel / film) as a row with a state-specific icon, elapsed time,
-/// and a short status message.
+/// A live status board showing each artifact (logo / carousel / film /
+/// website) as a row with a state-specific icon, elapsed time, and a
+/// short status message.
 ///
 /// Polls [apiClient.getBusinessProfileProjects] every [pollInterval] and
 /// rebuilds the rows. When every "real" row (logo, carousel, video) is
 /// either ready or failed, polling stops and [onAllReachedTerminalState]
 /// is fired so the parent can swap to the brand-kit reveal view.
 ///
-/// Colors and Typography are still placeholders in this milestone so
-/// they're shown as `notStarted` from the start - no polling cost.
+/// v37: Brand Colors and Typography rows were removed (the surfaces
+/// behind them no longer exist in the brand kit). Website is a locked
+/// Pro feature so its row is always `notStarted` — no backend project
+/// is created until the user upgrades.
 class GenerationStatusBoard extends StatefulWidget {
   final ApiClient apiClient;
   final String businessProfileId;
@@ -27,9 +29,9 @@ class GenerationStatusBoard extends StatefulWidget {
   final VoidCallback? onAllReachedTerminalState;
 
   /// Called when the user taps any row. The [artifactKey] is a
-  /// stable identifier ('logo' | 'colors' | 'typography' | 'carousel' |
-  /// 'film'). The [project] is null for rows that haven't been started
-  /// yet, otherwise it's the current snapshot from the backend.
+  /// stable identifier ('logo' | 'carousel' | 'film' | 'website').
+  /// The [project] is null for rows that haven't been started yet,
+  /// otherwise it's the current snapshot from the backend.
   ///
   /// The parent decides what to do - usually:
   ///   * Static artifacts (colors, typography) -> open static preview.
@@ -119,10 +121,9 @@ class _GenerationStatusBoardState extends State<GenerationStatusBoard> {
         elapsed: _elapsed(),
         children: const [
           _StatusRow.shimmer(label: 'Logo'),
-          _StatusRow.shimmer(label: 'Brand colors'),
-          _StatusRow.shimmer(label: 'Typography'),
           _StatusRow.shimmer(label: 'Social carousel'),
           _StatusRow.shimmer(label: '10-sec brand film'),
+          _StatusRow.shimmer(label: 'Website'),
         ],
       );
     }
@@ -136,16 +137,6 @@ class _GenerationStatusBoardState extends State<GenerationStatusBoard> {
           onTap: () => widget.onRowTap?.call('logo', snap.logo),
         ),
         _StatusRow.fromProject(
-          label: 'Brand colors',
-          project: null,
-          onTap: () => widget.onRowTap?.call('colors', null),
-        ),
-        _StatusRow.fromProject(
-          label: 'Typography',
-          project: null,
-          onTap: () => widget.onRowTap?.call('typography', null),
-        ),
-        _StatusRow.fromProject(
           label: 'Social carousel',
           project: snap.carousel,
           onTap: () => widget.onRowTap?.call('carousel', snap.carousel),
@@ -154,6 +145,11 @@ class _GenerationStatusBoardState extends State<GenerationStatusBoard> {
           label: '10-sec brand film',
           project: snap.video,
           onTap: () => widget.onRowTap?.call('film', snap.video),
+        ),
+        _StatusRow.fromProject(
+          label: 'Website',
+          project: null,
+          onTap: () => widget.onRowTap?.call('website', null),
         ),
       ],
     );
@@ -390,3 +386,4 @@ class _StatusRow extends StatelessWidget {
 }
 
 enum _RowState { loading, placeholder, notStarted, inProgress, ready, failed }
+              

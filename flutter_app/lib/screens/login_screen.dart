@@ -43,7 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
             apiClient: widget.apiClient,
             userId: user.id,
             tier: user.tier,
-            skipLockPrefetch: user.tier == 'pro',
+            skipLockPrefetch: user.isPaid,
           ),
         ),
       );

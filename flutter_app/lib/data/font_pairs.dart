@@ -1,4 +1,4 @@
-/// Fixed list of 6 font pair categories the user picks at signup time.
+/// Fixed list of font pair categories the user picks at signup time.
 /// Max 2 selections, stored as CSV in BusinessProfile.fontPreference.
 /// Display names are category-only ("Modern default", "Editorial", ...);
 /// the underlying Google Font families are kept here for the UI preview
@@ -56,9 +56,105 @@ class FontPairs {
     description: 'Bebas Neue headlines + Roboto body. Punchy, attention-grabbing.',
   );
 
-  /// The 6 options in the order shown in the form.
+  // ─── 15 additional font pairs (added for v36 expansion) ──────────────
+
+  static const classicSerif = FontPair(
+    key: 'classic_serif',
+    displayName: 'Classic serif',
+    googleFamily: 'Lora',
+    description: 'Lora headlines + Lora body. Warm, literary, story-led brands.',
+  );
+  static const condensed = FontPair(
+    key: 'condensed',
+    displayName: 'Condensed',
+    googleFamily: 'Oswald',
+    description: 'Oswald headlines + Open Sans body. Strong verticals, posters.',
+  );
+  static const handwritten = FontPair(
+    key: 'handwritten',
+    displayName: 'Handwritten',
+    googleFamily: 'Caveat',
+    description: 'Caveat headlines + Quicksand body. Friendly, artisanal tone.',
+  );
+  static const retro = FontPair(
+    key: 'retro',
+    displayName: 'Retro',
+    googleFamily: 'Abril Fatface',
+    description: 'Abril Fatface headlines + Lato body. Vintage display energy.',
+  );
+  static const corporate = FontPair(
+    key: 'corporate',
+    displayName: 'Corporate',
+    googleFamily: 'Poppins',
+    description: 'Poppins headlines + Poppins body. Reliable SaaS / enterprise.',
+  );
+  static const brutalist = FontPair(
+    key: 'brutalist',
+    displayName: 'Brutalist',
+    googleFamily: 'Space Mono',
+    description: 'Space Mono headlines + IBM Plex Sans body. Stark, opinionated.',
+  );
+  static const geometric = FontPair(
+    key: 'geometric',
+    displayName: 'Geometric',
+    googleFamily: 'Montserrat',
+    description: 'Montserrat headlines + Montserrat body. Pure circles and squares.',
+  );
+  static const humanist = FontPair(
+    key: 'humanist',
+    displayName: 'Humanist',
+    googleFamily: 'Nunito',
+    description: 'Nunito headlines + Nunito body. Warm, rounded, approachable.',
+  );
+  static const luxury = FontPair(
+    key: 'luxury',
+    displayName: 'Luxury',
+    googleFamily: 'Cormorant Garamond',
+    description: 'Cormorant Garamond headlines + Raleway body. Couture / hospitality.',
+  );
+  static const sports = FontPair(
+    key: 'sports',
+    displayName: 'Sports',
+    googleFamily: 'Anton',
+    description: 'Anton headlines + Roboto Condensed body. Athletic, high-energy.',
+  );
+  static const educational = FontPair(
+    key: 'educational',
+    displayName: 'Educational',
+    googleFamily: 'Merriweather',
+    description: 'Merriweather headlines + Open Sans body. Long-form readability.',
+  );
+  static const playful = FontPair(
+    key: 'playful',
+    displayName: 'Playful',
+    googleFamily: 'Fredoka',
+    description: 'Fredoka headlines + Nunito body. Kids, toys, joyful products.',
+  );
+  static const minimalMono = FontPair(
+    key: 'minimal_mono',
+    displayName: 'Minimal mono',
+    googleFamily: 'JetBrains Mono',
+    description: 'JetBrains Mono headlines + Inter body. Developer / tooling brands.',
+  );
+  static const swiss = FontPair(
+    key: 'swiss',
+    displayName: 'Swiss',
+    googleFamily: 'Work Sans',
+    description: 'Work Sans headlines + Work Sans body. Neutral grid-driven clarity.',
+  );
+  static const script = FontPair(
+    key: 'script',
+    displayName: 'Script',
+    googleFamily: 'Dancing Script',
+    description: 'Dancing Script headlines + Inter body. Boutique / lifestyle warmth.',
+  );
+
+  /// The 21 options in the order shown in the form.
   static const List<FontPair> all = [
     modernDefault, editorial, techForward, elegantSerif, utility, boldDisplay,
+    classicSerif, condensed, handwritten, retro, corporate,
+    brutalist, geometric, humanist, luxury, sports,
+    educational, playful, minimalMono, swiss, script,
   ];
 
   static FontPair byKey(String key) =>

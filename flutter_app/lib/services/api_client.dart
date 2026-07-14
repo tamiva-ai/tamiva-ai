@@ -193,12 +193,14 @@ class ApiClient {
   Future<RazorpayOrder> createRazorpayOrder({
     String? businessProfileId,
     String? idempotencyKey,
+    String? plan,
   }) async {
     final res = await _http.post(
       Uri.parse('$baseUrl/payments/order'),
       headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
       body: jsonEncode({
         if (businessProfileId != null) 'businessProfileId': businessProfileId,
+        if (plan != null) 'plan': plan,
       }),
     ).timeout(_kShortTimeout);
     _throwIfError(res);
@@ -209,6 +211,7 @@ class ApiClient {
       currency: body['currency'] as String? ?? 'INR',
       keyId: body['keyId'] as String,
       userId: body['userId'] as String,
+      plan: body['plan'] as String?,
     );
   }
 
@@ -649,6 +652,9 @@ class RazorpayOrder {
   final String currency;
   final String keyId;
   final String userId;
+  // v37: server echoes the resolved plan so callers can show the right
+  // post-purchase confirmation without re-resolving it.
+  final String? plan;
 
   const RazorpayOrder({
     required this.orderId,
@@ -656,5 +662,6 @@ class RazorpayOrder {
     required this.currency,
     required this.keyId,
     required this.userId,
+    this.plan,
   });
 }

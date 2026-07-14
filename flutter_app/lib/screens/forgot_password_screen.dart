@@ -17,7 +17,16 @@ import 'business_info_screen.dart';
 class ForgotPasswordScreen extends StatefulWidget {
   final ApiClient apiClient;
 
-  const ForgotPasswordScreen({super.key, required this.apiClient});
+  /// Optional email to prefill in step 1 — used by the "Email already
+  /// registered" dialog on the welcome screen, so the user lands on the
+  /// code-request step without re-typing.
+  final String? prefillEmail;
+
+  const ForgotPasswordScreen({
+    super.key,
+    required this.apiClient,
+    this.prefillEmail,
+  });
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -43,6 +52,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   // count locally so we can show "N tries left" without a round-trip.
   static const int _maxCodeAttempts = 5;
   int _codeAttempts = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // v37: welcome screen hands off the email so the user lands on the
+    // code-request step without re-typing.
+    if (widget.prefillEmail != null && widget.prefillEmail!.isNotEmpty) {
+      _emailController.text = widget.prefillEmail!;
+    }
+  }
 
   @override
   void dispose() {
@@ -118,7 +137,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             apiClient: widget.apiClient,
             userId: user.id,
             tier: user.tier,
-            skipLockPrefetch: user.tier == 'pro',
+            skipLockPrefetch: user.isPaid,
           ),
         ),
         (route) => false,

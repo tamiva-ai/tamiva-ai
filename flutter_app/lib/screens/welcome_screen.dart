@@ -190,18 +190,63 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
           apiClient: widget.apiClient,
           userId: user.id,
           tier: user.tier,
-          skipLockPrefetch: user.tier == 'pro',
+          skipLockPrefetch: user.isPaid,
         ),
       ),
     );
   }
 
   Future<void> _showAlreadyRegisteredDialog(String body) async {
+    // v37: friendlier copy per product. For an email collision we
+    // surface the canonical "would you like to reset your password?"
+    // prompt. For a phone collision we keep the existing behaviour
+    // (sign in instead) since there's no password flow tied to phone.
     final lower = body.toLowerCase();
     final isEmail = lower.contains('email');
     final isPhone = lower.contains('phone') || lower.contains('mobile');
-    final subject = isEmail ? 'email' : isPhone ? 'mobile number' : 'account';
     if (!mounted) return;
+
+    if (isEmail) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: TamivaColors.surfaceRaised,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(TamivaRadii.md),
+            side: const BorderSide(color: TamivaColors.divider),
+          ),
+          title: Text('Email already registered',
+              style: Theme.of(ctx).textTheme.titleLarge),
+          content: Text(
+            'This email is already registered. Would you like to reset your password?',
+            style: Theme.of(ctx).textTheme.bodyMedium,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ForgotPasswordScreen(
+                      apiClient: widget.apiClient,
+                      prefillEmail: _emailController.text.trim(),
+                    ),
+                  ),
+                );
+              },
+              child: const Text('Reset password'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final subject = isPhone ? 'mobile number' : 'account';
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -213,21 +258,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         title: Text('You already have a studio',
             style: Theme.of(ctx).textTheme.titleLarge),
         content: Text(
-          'This $subject is already registered. Sign in to pick up where you left off, or reset your password.',
+          'This $subject is already registered. Sign in to pick up where you left off.',
           style: Theme.of(ctx).textTheme.bodyMedium,
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) =>
-                      ForgotPasswordScreen(apiClient: widget.apiClient),
-                ),
-              );
-            },
-            child: const Text('Forgot password?'),
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () {

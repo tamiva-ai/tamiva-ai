@@ -93,6 +93,13 @@ class User {
     );
   }
 
+  /// True when the user is on any paid tier (launch / pro / premium).
+  /// Use this for paid-feature gating. Use [tier] directly when the UI
+  /// needs to show plan-specific copy.
+  bool get isPaid => tier != 'free' && tier.isNotEmpty;
+
+  /// Kept for back-compat with code paths that only care about Pro.
+  /// Prefer [isPaid] for new gating checks.
   bool get isPro => tier == 'pro';
 }
 

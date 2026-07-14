@@ -7,7 +7,9 @@ import { prisma } from "../db/client.js";
 import { idempotency } from "../middleware/idempotency.js";
 import {
   getEffectiveTier,
+  isPaidTier,
   proExpiryFromNow,
+  type TierName,
 } from "../util/tier.js";
 
 export const paymentsRouter = Router();
@@ -26,9 +28,18 @@ const keyId = process.env.RAZORPAY_KEY_ID;
 const keySecret = process.env.RAZORPAY_KEY_SECRET;
 const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
 
-const PRO_AMOUNT_PAISE = Number(
-  process.env.RAZORPAY_PRO_AMOUNT_PAISE ?? 500000,
-);
+// v37: three pricing plans. Amounts are in paise (₹1 = 100 paise).
+// Each plan maps to a paid tier (launch / pro / premium). Adding a new
+// plan is a one-line entry here + matching string in the Flutter client.
+const PLAN_AMOUNTS_PAISE: Record<Exclude<TierName, "free">, number> = {
+  launch: 199900, // ₹1,999
+  pro: 599900, // ₹5,999 (was ₹5,000 before three-tier launch)
+  premium: 999900, // ₹9,999
+};
+
+function isKnownPlan(p: string): p is Exclude<TierName, "free"> {
+  return p === "launch" || p === "pro" || p === "premium";
+}
 
 const razorpay =
   keyId && keySecret
@@ -58,6 +69,9 @@ function ensureConfigured(res: Response): boolean {
 const createOrderSchema = z
   .object({
     businessProfileId: z.string().min(1).optional(),
+    // v37: client-supplied plan id. Defaults to "pro" for back-compat
+    // with the v36 single-tier client.
+    plan: z.enum(["launch", "pro", "premium"]).optional(),
   })
   .strict();
 
@@ -82,9 +96,22 @@ paymentsRouter.post(
       const user = await prisma.user.findUnique({ where: { id: userId } });
       if (!user) return res.status(404).json({ error: "User not found." });
 
+      // v37: resolve the chosen plan (default "pro" for back-compat).
+      const plan: Exclude<TierName, "free"> = isKnownPlan(
+        parsed.data.plan ?? "pro",
+      )
+        ? (parsed.data.plan as Exclude<TierName, "free">)
+        : "pro";
+      const amountPaise = PLAN_AMOUNTS_PAISE[plan];
+
       const effective = await getEffectiveTier(user.id);
-      if (effective.tier === "pro") {
-        return res.status(409).json({ error: "You're already on Tamiva Pro." });
+      // Refuse to bill if the user is already on the same (or higher)
+      // paid plan. Switching plans mid-cycle isn't supported yet; user
+      // should let the current plan expire or contact support.
+      if (effective.tier === plan) {
+        return res.status(409).json({
+          error: `You're already on the ${plan} plan.`,
+        });
       }
 
       if (parsed.data.businessProfileId) {
@@ -102,10 +129,10 @@ paymentsRouter.post(
 
       try {
         const order = await razorpay!.orders.create({
-          amount: PRO_AMOUNT_PAISE,
+          amount: amountPaise,
           currency: "INR",
-          receipt: `pro_${Date.now()}`,
-          notes: { userId: user.id, plan: "tamiva_pro_monthly" },
+          receipt: `${plan}_${Date.now()}`,
+          notes: { userId: user.id, plan },
         });
 
         await prisma.paymentOrder.upsert({
@@ -113,8 +140,9 @@ paymentsRouter.post(
           create: {
             userId: user.id,
             providerOrderId: order.id,
-            amountPaise: PRO_AMOUNT_PAISE,
+            amountPaise,
             currency: "INR",
+            plan,
             status: "created",
           },
           update: {},
@@ -126,6 +154,7 @@ paymentsRouter.post(
           currency: order.currency,
           keyId,
           userId: user.id,
+          plan,
         });
       } catch (err) {
         console.error("[payments/order] error:", err);
@@ -204,6 +233,14 @@ paymentsRouter.post(
           error: "Order doesn't belong to this user.",
         });
       }
+
+      // v37: read the plan from the PaymentOrder row. Persisted at order
+      // creation time. Default to "pro" if the column is null (orders
+      // created before the v37 migration).
+      const plan: Exclude<TierName, "free"> = isKnownPlan(order.plan ?? "")
+        ? (order.plan as Exclude<TierName, "free">)
+        : "pro";
+
       if (order.status === "paid") {
         const tier = await getEffectiveTier(userId);
         return res.json({
@@ -226,7 +263,7 @@ paymentsRouter.post(
         prisma.user.update({
           where: { id: userId },
           data: {
-            tier: "pro",
+            tier: plan,
             tierUpdatedAt: now,
             tierExpiresAt: proExpiryFromNow(now),
           },
@@ -341,6 +378,12 @@ paymentsRouter.post("/webhook", async (req: Request, res: Response) => {
     return res.json({ ok: true, alreadyPaid: true });
   }
 
+  // v37: resolve plan the same way /verify does. Pre-v37 orders fall
+  // back to "pro".
+  const plan: Exclude<TierName, "free"> = isKnownPlan(order.plan ?? "")
+    ? (order.plan as Exclude<TierName, "free">)
+    : "pro";
+
   const now = new Date();
   await prisma.$transaction([
     prisma.paymentOrder.update({
@@ -354,7 +397,7 @@ paymentsRouter.post("/webhook", async (req: Request, res: Response) => {
     prisma.user.update({
       where: { id: order.userId },
       data: {
-        tier: "pro",
+        tier: plan,
         tierUpdatedAt: now,
         tierExpiresAt: proExpiryFromNow(now),
       },

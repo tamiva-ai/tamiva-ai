@@ -13,7 +13,6 @@ import '../errors/user_facing_error.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../services/draft_store.dart';
-import '../services/payment_service.dart';
 import '../theme/tamiva_theme.dart';
 import '../widgets/hero_scaffold.dart';
 import '../widgets/inline_error.dart';
@@ -21,6 +20,7 @@ import '../widgets/exit_confirm_scope.dart';
 import '../widgets/logout_action.dart';
 import '../widgets/multi_select_sheet.dart';
 import 'brand_assets_screen.dart';
+import 'pricing_screen.dart';
 import 'upload_assets_screen.dart';
 
 class BusinessInfoScreen extends StatefulWidget {
@@ -61,10 +61,13 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
   bool _loading = true;
   bool _locked = false;
   String? _existingProfileId;
-  // v24: tier at submit time. Pro users editing go through the PUT
-  // pathway (which clears old assets), Free users go through the POST
-  // pathway (which creates a new profile).
+  // v24: tier at submit time. Paid users (any non-free plan) editing
+  // go through the PUT pathway (which clears old assets), Free users
+  // go through the POST pathway (which creates a new profile).
   late String _tier;
+
+  /// v37: any paid tier unlocks the editing flow.
+  bool get _isPaid => _tier != 'free' && _tier.isNotEmpty;
 
   UserFacingError? _error;
 
@@ -217,10 +220,10 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => MultiSelectSheet(
-        title: 'Pick colour palettes (max 2)',
+        title: 'Pick a colour palette',
         options: PaletteStyles.all.map((p) => p.displayName).toList(),
         selected: _selectedPalettes,
-        maxSelection: 2,
+        maxSelection: 1,
         optionLeadingBuilder: (option) {
           final palette = PaletteStyles.all.firstWhere(
             (p) => p.displayName == option,
@@ -257,10 +260,10 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => MultiSelectSheet(
-        title: 'Pick typography styles (max 2)',
+        title: 'Pick a typography style',
         options: FontPairs.all.map((p) => p.displayName).toList(),
         selected: _selectedFonts,
-        maxSelection: 2,
+        maxSelection: 1,
         optionTextStyleBuilder: (option) {
           final pair = FontPairs.all.firstWhere(
             (p) => p.displayName == option,
@@ -276,34 +279,9 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     }
   }
 
-  Future<void> _startProCheckout() async {
-    final result = await PaymentService.startProCheckout(
-      api: widget.apiClient,
-      // businessProfileId is null here — server resolves user via x-user-id
-      // header (S1.6). Pass null to skip the optional businessProfile sanity
-      // check.
-    );
-    if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    if (result.ok) {
-      // Backend already flipped the tier to Pro during verification.
-      setState(() {
-        _tier = result.tier ?? 'pro';
-        _locked = false; // unlock the form
-      });
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Upgrade successful. Edit your business.')),
-      );
-    } else if (result.cancelled) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Checkout cancelled.')),
-      );
-    } else {
-      messenger.showSnackBar(
-        SnackBar(content: Text(result.message ?? 'Checkout failed.')),
-      );
-    }
-  }
+  // v37: the locked view now opens the Pricing screen via a fresh
+// navigation in the build method below; _startProCheckout is no
+// longer used in this file.
 
   void _continueToBrandKit() {
     final profileId = _existingProfileId;
@@ -336,11 +314,11 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       _error = null;
     });
     try {
-      // For a Pro user editing an existing profile, use PUT. For new
+      // For a paid user editing an existing profile, use PUT. For new
       // (Free) signups, use POST. Single code path keeps the form happy
       // either way.
       String profileId;
-      if (_tier == 'pro' && _existingProfileId != null) {
+      if (_isPaid && _existingProfileId != null) {
         final updated = await widget.apiClient.updateBusinessProfile(
           userId: widget.userId,
           name: _nameController.text.trim(),
@@ -451,16 +429,24 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    _tier == 'pro'
-                        ? 'Editing your business starts a new regeneration cycle. Pay ₹5000 to unlock editing.'
-                        : "You've already set up your studio. Editing your business info is part of Tamiva Pro.",
+                    _isPaid
+                        ? 'Editing your business starts a new regeneration cycle. Pick a plan to unlock editing.'
+                        : "You've already set up your studio. Editing your business info is part of a paid plan.",
                     textAlign: TextAlign.center,
                     style: textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 28),
                   GradientCtaButton(
-                    onPressed: _startProCheckout,
-                    child: const Text('Upgrade to Tamiva Pro · ₹5000/mo'),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PricingScreen(
+                            apiClient: widget.apiClient,
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('Choose a plan'),
                   ),
                   const SizedBox(height: 8),
                   TextButton(
@@ -745,8 +731,8 @@ class _PalettePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _ChipPickerCard(
-      label: 'COLOUR PALETTE (MAX 2)',
-      emptyHint: 'Tap to pick one or two palettes',
+      label: 'COLOUR PALETTE (PICK 1)',
+      emptyHint: 'Tap to pick a palette',
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,
@@ -767,8 +753,8 @@ class _FontPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _ChipPickerCard(
-      label: 'TYPOGRAPHY STYLE (MAX 2)',
-      emptyHint: 'Tap to pick one or two styles',
+      label: 'TYPOGRAPHY STYLE (PICK 1)',
+      emptyHint: 'Tap to pick a style',
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,

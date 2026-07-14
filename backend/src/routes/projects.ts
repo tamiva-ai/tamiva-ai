@@ -19,7 +19,7 @@ import {
   type ReferenceBundle,
 } from "../prompts/index.js";
 import { idempotency } from "../middleware/idempotency.js";
-import { getEffectiveTier } from "../util/tier.js";
+import { getEffectiveTier, isPaidTier } from "../util/tier.js";
 
 export const projectsRouter = Router();
 
@@ -91,7 +91,8 @@ async function enforceFreeQuota(
 
   // Reconcile tier first so an expired Pro user gets free-tier copy.
   const effective = await getEffectiveTier(profile.user.id);
-  if (effective.tier === "pro") return { allowed: true };
+  // v37: any paid tier (launch / pro / premium) skips the free-quota.
+  if (isPaidTier(effective.tier)) return { allowed: true };
 
   // Count Projects already in flight OR finished for this type.
   const activeCount = await prisma.project.count({
@@ -234,10 +235,11 @@ projectsRouter.post(
       include: { user: { select: { id: true, tier: true } } },
     });
     const effective = await getEffectiveTier(profileWithTier!.user.id);
-    const isPro = effective.tier === "pro";
+    // v37: any paid tier gets the full carousel scope.
+    const isPaid = isPaidTier(effective.tier);
 
-    const campaignIndex = isPro ? undefined : pickCarouselCampaignForFreeTier();
-    const effectiveSlideCount = isPro ? parsed.data.slideCount : 1;
+    const campaignIndex = isPaid ? undefined : pickCarouselCampaignForFreeTier();
+    const effectiveSlideCount = isPaid ? parsed.data.slideCount : 1;
 
     const slides = Array.from(
       { length: effectiveSlideCount },
@@ -321,9 +323,9 @@ projectsRouter.post(
       include: { user: { select: { id: true, tier: true } } },
     });
     const effective = await getEffectiveTier(profileWithTier!.user.id);
-    const isPro = effective.tier === "pro";
+    const isPaid = isPaidTier(effective.tier);
 
-    const conceptIndex = isPro ? 1 : pickFilmConceptForFreeTier();
+    const conceptIndex = isPaid ? 1 : pickFilmConceptForFreeTier();
     const prompt = buildFilmPrompt(ctx, refs, conceptIndex);
 
     const project = await prisma.project.create({
@@ -383,9 +385,9 @@ projectsRouter.post("/bulk", async (req, res) => {
   if (!profile)
     return res.status(404).json({ error: "Business profile not found" });
   const effective = await getEffectiveTier(profile.user.id);
-  if (effective.tier !== "pro") {
+  if (!isPaidTier(effective.tier)) {
     return res.status(403).json({
-      error: "Bulk generation requires Tamiva Pro. Pay ₹5000 to unlock.",
+      error: "Bulk generation requires a paid plan. Tap Upgrade to choose one.",
     });
   }
 
