@@ -551,51 +551,7 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
       );
     }
 
-    // No logo project yet. Show an explicit "Generate your logo" CTA
-    // instead of silently auto-firing on mount — the user chooses when
-    // to spend their one free generation, and sees clear feedback.
-    if (_projectId == null) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(28, 40, 28, 28),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(Icons.auto_awesome, size: 44, color: TamivaColors.gold),
-            const SizedBox(height: 20),
-            Text('Generate your logo',
-                textAlign: TextAlign.center, style: textTheme.titleLarge),
-            const SizedBox(height: 10),
-            Text(
-              "We'll craft a clean, modern mark from your business profile. "
-              "This is your 1 free logo.",
-              textAlign: TextAlign.center,
-              style: textTheme.bodyMedium
-                  ?.copyWith(color: TamivaColors.textSecondary),
-            ),
-            const SizedBox(height: 28),
-            GradientCtaButton(
-              onPressed: _startingLogo ? null : _beginLogoGeneration,
-              loading: _startingLogo,
-              child: const Text('Generate logo'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (!_logoReady && _projectId == null) {
-      // v37: first-time user with no logo yet — show the full 4-tile
-      // reveal so they see the entire studio at a glance, instead of
-      // a single "Generate your logo" CTA. The Logo tile itself is
-      // empty (no project), and tapping it kicks off generation;
-      // the lower three tiles use their own preview widgets which
-      // bootstrap from the server and render placeholders until the
-      // user requests each artifact. The carousel/film/website tiles
-      // all work the same way whether the logo exists or not.
-      // Fall through to the reveal list below.
-      // (No early return — keep showing the 4 tiles.)
-    } else if (!_logoReady) {
+    if (!_logoReady) {
       // Logo was started but isn't done yet — surface the live status
       // board so the user can see the progress of the in-flight
       // generation. Once the logo lands, this view is replaced by
@@ -2668,3 +2624,4 @@ Color _hexToColor(String hex) {
   final v = int.tryParse('FF$cleaned', radix: 16);
   return v == null ? TamivaColors.textFaint : Color(v);
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
