@@ -77,6 +77,7 @@ class CascadedStack extends StatelessWidget {
                       ],
                     ),
                     child: Stack(
+                      fit: StackFit.expand,
                       children: [
                         Positioned.fill(
                           child: ClipRRect(
