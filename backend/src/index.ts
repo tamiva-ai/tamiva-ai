@@ -40,7 +40,13 @@ app.use("/auth", meRouter);
 app.use("/admin", adminRouter);
 app.use("/payments", paymentsRouter);
 
-// Catches errors thrown by route handlers/multer and// of Express's default HTML error page.
+// Catches errors thrown by route handlers/multer and any async error
+// not handled inside a route, returning JSON instead of Express's
+// default HTML error page. The Flutter client always parses the body
+// as JSON, so any HTML response breaks the error path (e.g. signup
+// silently showed "Studio hiccup" because the message couldn't be
+// decoded). v37: this is the single most common cause of mystery
+// client-side fallback errors after a backend deploy.
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
   res.status(500).json({ error: err.message ?? "Internal server error" });

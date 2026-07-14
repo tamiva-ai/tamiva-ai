@@ -468,7 +468,15 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
                     ? const SizedBox.shrink()
                     : GradientCtaButton(
                         onPressed: _openPricingScreen,
-                        child: const Text('Upgrade to Tamiva Pro'),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.lock_outline,
+                                color: Color(0xFF1A0F02), size: 18),
+                            SizedBox(width: 8),
+                            Text('Upgrade to Tamiva Pro'),
+                          ],
+                        ),
                       ),
               ),
             ],
@@ -576,11 +584,21 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
       );
     }
 
-    if (!_logoReady) {
-      // Live status board instead of the old single-opaque-spinner -
-      // the user can see exactly which artifact is at which stage
-      // (queued / generating / ready / failed) and how long each has
-      // been running. Once the logo lands, this view is replaced by
+    if (!_logoReady && _projectId == null) {
+      // v37: first-time user with no logo yet — show the full 4-tile
+      // reveal so they see the entire studio at a glance, instead of
+      // a single "Generate your logo" CTA. The Logo tile itself is
+      // empty (no project), and tapping it kicks off generation;
+      // the lower three tiles use their own preview widgets which
+      // bootstrap from the server and render placeholders until the
+      // user requests each artifact. The carousel/film/website tiles
+      // all work the same way whether the logo exists or not.
+      // Fall through to the reveal list below.
+      // (No early return — keep showing the 4 tiles.)
+    } else if (!_logoReady) {
+      // Logo was started but isn't done yet — surface the live status
+      // board so the user can see the progress of the in-flight
+      // generation. Once the logo lands, this view is replaced by
       // the full brand-kit reveal below.
       return GenerationStatusBoard(
         apiClient: widget.apiClient,
@@ -608,9 +626,15 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             title: 'Logo',
             hiddenCount: 0,
             frontChild: _LogoPreview(project: _project),
-            onFrontTap: _project != null && _project!.isReady
-                ? () => openProjectPreview(context, widget.apiClient, _project!)
-                : null,
+            // v37: first-time user with no project yet can tap the
+            // Logo tile to kick off generation. After the logo lands
+            // we tap-to-open the viewer instead.
+            onFrontTap: _project == null
+                ? _beginLogoGeneration
+                : (_project!.isReady
+                    ? () => openProjectPreview(
+                        context, widget.apiClient, _project!)
+                    : null),
           ),
           const SizedBox(height: 28),
           _BrandKitSection(
@@ -690,7 +714,31 @@ class _LogoPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (project == null || project!.isInProgress) {
+    // First-time user with no logo yet — show the tap-to-generate CTA
+    // inline so the brand kit reveal makes sense from the first screen.
+    if (project == null) {
+      return Container(
+        color: TamivaColors.surface,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
+          children: [
+            const Icon(Icons.auto_awesome,
+                color: TamivaColors.gold, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Tap to generate · 1 free logo',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: TamivaColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (project!.isInProgress) {
       return const ColoredBox(
         color: TamivaColors.surface,
         child: Center(

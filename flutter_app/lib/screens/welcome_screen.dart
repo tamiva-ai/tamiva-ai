@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -116,13 +117,101 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         await _doSignIn();
       }
     } catch (e) {
-      setState(() => _error = UserFacingError.from(
-            e,
-            operation: _signUpMode ? 'create your account' : 'sign you in',
-          ));
+      setState(() => _error = _formatAuthError(e, _signUpMode));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// Build a friendly error for the auth surface.
+  ///
+  /// v37: We intentionally avoid the "Studio hiccup" title from
+  /// [UserFacingError.from] here. That title sounds like a transient
+  /// infra stall, but most signup failures are permanent (duplicate
+  /// email caught server-side, validation mismatch the local checks
+  /// missed, etc.) and the user needs to either edit their details or
+  /// contact support — not wait it out.
+  ///
+  /// When the backend gives us a useful error message via the JSON
+  /// body (now standard thanks to the v37 Express error handler in
+  /// `backend/src/index.ts`), we trust it and surface it with a calmer
+  /// title. When we don't have a usable message, we fall back to a
+  /// generic action-oriented prompt.
+  UserFacingError _formatAuthError(Object error, bool isSignUp) {
+    final defaultOp = isSignUp ? 'create your account' : 'sign you in';
+
+    // Network / offline / timeout — those genuinely are transient, so
+    // keep the original copy.
+    if (error is SocketException ||
+        error is HttpException ||
+        error is TimeoutException) {
+      return UserFacingError.from(error, operation: defaultOp);
+    }
+
+    // Backend returned a structured error. Whatever message the server
+    // sent is more useful than any client-side guess, so use it.
+    if (error is ApiException) {
+      final apiError = UserFacingError.from(error, operation: defaultOp);
+      final backendMessage = _extractApiMessage(error);
+      final friendlyTitle = isSignUp
+          ? "We couldn't create your account"
+          : "We couldn't sign you in";
+      // The generic copy from UserFacingError.from isn't great for
+      // auth — replace the title with our own, and prefer the
+      // backend's actual reason over the canned "try again" line.
+      if (backendMessage != null && backendMessage.isNotEmpty) {
+        return UserFacingError(
+          title: friendlyTitle,
+          message: backendMessage,
+          retryLabel: 'Try again',
+        );
+      }
+      // No usable backend message. Keep apiError but strip the
+      // "Studio hiccup" / "usually clears in a few seconds" framing
+      // when it slipped through.
+      if (apiError.title == 'Studio hiccup' ||
+          apiError.message.contains('usually clears in a few seconds')) {
+        return UserFacingError(
+          title: friendlyTitle,
+          message: 'Something went wrong on our end. '
+              'Check your details and try again. If it keeps happening, '
+              'our support team can help.',
+          retryLabel: 'Try again',
+        );
+      }
+      return apiError;
+    }
+
+    // Anything else (FormatException from a malformed body, generic
+    // Exception, etc.) — fall back to a calm, action-oriented prompt.
+    return UserFacingError(
+      title: isSignUp
+          ? "We couldn't create your account"
+          : "We couldn't sign you in",
+      message: 'Check your details and try again. '
+          'If it keeps happening, our support team can help.',
+      retryLabel: 'Try again',
+    );
+  }
+
+  /// Read the JSON `{ "error": "..." }` body from an [ApiException].
+  /// Returns null if the body isn't a parseable JSON envelope or the
+  /// message is the default Express fallback ("Internal server error"),
+  /// which we don't want to leak to users verbatim.
+  String? _extractApiMessage(ApiException e) {
+    try {
+      final decoded = jsonDecode(e.body);
+      if (decoded is Map && decoded['error'] is String) {
+        final msg = (decoded['error'] as String).trim();
+        // Skip the default Express fallback so we don't show
+        // "Internal server error" — that's a server-side message, not
+        // user-facing copy.
+        if (msg.isEmpty || msg == 'Internal server error') return null;
+        // Guard against backend leaking stack traces or internals.
+        if (msg.length < 200 && !msg.contains('at ')) return msg;
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// Returns the User on success, throws on failure (caller surfaces
