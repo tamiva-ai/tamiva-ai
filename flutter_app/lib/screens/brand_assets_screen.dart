@@ -1034,96 +1034,57 @@ class _WebsiteRollingPreviewState extends State<_WebsiteRollingPreview>
 // CAROUSEL - tappable, generates 5 slides on first tap.
 
 // Top-level helpers callable from any context (the status board, the
-// preview widgets, anywhere). Each asks for confirmation with the right
-// cost line, kicks off the generation, and stashes the resulting
-// projectId in a registry so other widgets can find it.
+// preview widgets, anywhere). They fire the API directly — no
+// confirmation dialog (the tap on the tile is the user's intent; the
+// tile copy already shows the cost line).
 
-/// Confirmation dialog reused for carousel + film + logo retries.
-Future<bool?> _confirmDialog(
-  BuildContext context, {
-  required String title,
-  required String body,
-  required String costLine,
-  bool strikeCost = false,
-  String confirmLabel = 'Generate',
-}) {
-  return showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: TamivaColors.surfaceRaised,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(TamivaRadii.md),
-        side: const BorderSide(color: TamivaColors.divider),
-      ),
-      title: Text(title, style: Theme.of(ctx).textTheme.titleLarge),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(body, style: Theme.of(ctx).textTheme.bodyMedium),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: TamivaColors.gold.withOpacity(0.12),
-              border: Border.all(color: TamivaColors.gold.withOpacity(0.4)),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.bolt, color: TamivaColors.gold, size: 16),
-                const SizedBox(width: 8),
-                Text(costLine,
-                    style: Theme.of(ctx).textTheme.labelLarge?.copyWith(
-                          color: TamivaColors.gold,
-                          decoration:
-                              strikeCost ? TextDecoration.lineThrough : null,
-                          decorationColor: TamivaColors.gold,
-                        )),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '1 Free generation',
-            style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
-                  color: TamivaColors.textFaint,
-                  fontSize: 11,
-                ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(ctx).pop(true),
-          child: Text(confirmLabel),
-        ),
-      ],
-    ),
-  );
-}
-
-/// Kicks off a carousel generation after confirming with the user.
-/// On confirm, fires the request and returns the new projectId. Returns
-/// null if user cancelled or the request failed.
+/// Kicks off a carousel generation. Fires the request and returns the
+/// new projectId. Returns null on failure.
+///
+/// v37: dropped the cost-estimate confirmation dialog. The tap on the
+/// tile is itself the user's intent; an extra modal was just friction
+/// now that plans are flat (every paid plan gets unlimited). The
+/// "Cost" line on the tile is enough context.
 Future<String?> startCarouselGeneration({
   required BuildContext context,
   required ApiClient apiClient,
   required String businessProfileId,
 }) async {
-  final confirmed = await _confirmDialog(
-    context,
-    title: 'Generate your carousel',
-    body: "We'll render a 5-slide Brand Story arc using your business "
-        "profile and any reference photos you uploaded.",
-    costLine: 'Est. ₹150',
-    strikeCost: true,
-  );
-  if (confirmed != true) return null;
+  try {
+    return await apiClient.createCarouselProject(
+      businessProfileId: businessProfileId,
+    );
+  } on ApiException catch (e) {
+    if (!context.mounted) return null;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(UserFacingError.from(e, operation: 'start carousel').message),
+      ),
+    );
+    return null;
+  } catch (e) {
+    if (!context.mounted) return null;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(UserFacingError.from(e, operation: 'start carousel').message),
+      ),
+    );
+    return null;
+  }
+}
+
+/// Kicks off a carousel generation. Fires the request and returns the
+/// new projectId. Returns null on failure.
+///
+/// v37: dropped the cost-estimate confirmation dialog. The tap on the
+/// tile is itself the user's intent; an extra modal was just friction
+/// now that plans are flat (every paid plan gets unlimited). The
+/// "Cost" line on the tile is enough context.
+Future<String?> startCarouselGeneration({
+  required BuildContext context,
+  required ApiClient apiClient,
+  required String businessProfileId,
+}) async {
   try {
     return await apiClient.createCarouselProject(
       businessProfileId: businessProfileId,
@@ -1148,19 +1109,13 @@ Future<String?> startCarouselGeneration({
 }
 
 /// Same shape as startCarouselGeneration but for the 8-second film.
+/// v37: dropped the cost-estimate confirmation dialog (see
+/// startCarouselGeneration for the rationale).
 Future<String?> startFilmGeneration({
   required BuildContext context,
   required ApiClient apiClient,
   required String businessProfileId,
 }) async {
-  final confirmed = await _confirmDialog(
-    context,
-    title: 'Generate your brand film',
-    body: "We'll render a cinematic 8-second opener using your business "
-        "profile and any reference photos you uploaded.",
-    costLine: 'Est. ₹60–100',
-  );
-  if (confirmed != true) return null;
   try {
     final result = await apiClient.createVideoProject(
       businessProfileId: businessProfileId,
