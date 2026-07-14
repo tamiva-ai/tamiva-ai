@@ -4,7 +4,6 @@ import '../data/pricing_plans.dart';
 import '../services/api_client.dart';
 import '../services/payment_service.dart';
 import '../theme/tamiva_theme.dart';
-import '../widgets/hero_scaffold.dart';
 import '../widgets/logout_action.dart';
 
 /// Three-plan pricing screen. Clean and minimal — no badges, no
@@ -68,10 +67,19 @@ class _PricingScreenState extends State<PricingScreen> {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    return HeroBannerScaffold(
-      heroAsset: 'assets/hero/brand_assets.png',
-      title: 'Choose a plan',
-      actions: [LogoutAction(apiClient: widget.apiClient)],
+    // v37: switched from `HeroBannerScaffold` to a plain `Scaffold` +
+    // scrollable body. The hero scaffold's `SliverToBoxAdapter(ListView)`
+    // combination was rendering as an empty black surface on Android
+    // (the body never got laid out under the pinned app bar), so the
+    // user saw only the title bar.
+    return Scaffold(
+      backgroundColor: TamivaColors.background,
+      appBar: AppBar(
+        title: const Text('Choose a plan'),
+        actions: [
+          LogoutAction(apiClient: widget.apiClient),
+        ],
+      ),
       body: SafeArea(
         top: false,
         child: ListView(
