@@ -551,7 +551,51 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
       );
     }
 
-    if (!_logoReady) {
+    // No logo project yet. Show an explicit "Generate your logo" CTA
+    // instead of silently auto-firing on mount — the user chooses when
+    // to spend their one free generation, and sees clear feedback.
+    if (_projectId == null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(28, 40, 28, 28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(Icons.auto_awesome, size: 44, color: TamivaColors.gold),
+            const SizedBox(height: 20),
+            Text('Generate your logo',
+                textAlign: TextAlign.center, style: textTheme.titleLarge),
+            const SizedBox(height: 10),
+            Text(
+              "We'll craft a clean, modern mark from your business profile. "
+              "This is your 1 free logo.",
+              textAlign: TextAlign.center,
+              style: textTheme.bodyMedium
+                  ?.copyWith(color: TamivaColors.textSecondary),
+            ),
+            const SizedBox(height: 28),
+            GradientCtaButton(
+              onPressed: _startingLogo ? null : _beginLogoGeneration,
+              loading: _startingLogo,
+              child: const Text('Generate logo'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_logoReady && _projectId == null) {
+      // v37: first-time user with no logo yet — show the full 4-tile
+      // reveal so they see the entire studio at a glance, instead of
+      // a single "Generate your logo" CTA. The Logo tile itself is
+      // empty (no project), and tapping it kicks off generation;
+      // the lower three tiles use their own preview widgets which
+      // bootstrap from the server and render placeholders until the
+      // user requests each artifact. The carousel/film/website tiles
+      // all work the same way whether the logo exists or not.
+      // Fall through to the reveal list below.
+      // (No early return — keep showing the 4 tiles.)
+    } else if (!_logoReady) {
       // Logo was started but isn't done yet — surface the live status
       // board so the user can see the progress of the in-flight
       // generation. Once the logo lands, this view is replaced by
@@ -578,63 +622,44 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             style: textTheme.bodyMedium,
           ),
           const SizedBox(height: 28),
-          // v37: 2-column grid layout. Each tile takes ~half the row,
-          // so four tiles arrange in two rows of two. The Wrap handles
-          // tight widths gracefully (it falls back to a single column
-          // on narrow phones) without needing a separate media query.
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              SizedBox(
-                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
-                child: _BrandKitSection(
-                  title: 'Logo',
-                  hiddenCount: 0,
-                  frontChild: _LogoPreview(project: _project),
-                  // v37: first-time user with no project yet can tap the
-                  // Logo tile to kick off generation. After the logo lands
-                  // we tap-to-open the viewer instead.
-                  onFrontTap: _project == null
-                      ? _beginLogoGeneration
-                      : (_project!.isReady
-                          ? () => openProjectPreview(
-                              context, widget.apiClient, _project!)
-                          : null),
-                ),
-              ),
-              SizedBox(
-                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
-                child: _BrandKitSection(
-                  title: 'Social carousel',
-                  hiddenCount: 0,
-                  frontChild: _CarouselPreview(
-                    apiClient: widget.apiClient,
-                    businessProfileId: widget.businessProfileId,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
-                child: _BrandKitSection(
-                  title: '10-sec brand film',
-                  hiddenCount: 0,
-                  frontChild: _FilmPreview(
-                    apiClient: widget.apiClient,
-                    businessProfileId: widget.businessProfileId,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: (MediaQuery.of(context).size.width - 20 * 2 - 12) / 2,
-                child: _BrandKitSection(
-                  title: 'Website',
-                  hiddenCount: 0,
-                  frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
-                  onFrontTap: _openPricingScreen,
-                ),
-              ),
-            ],
+          _BrandKitSection(
+            title: 'Logo',
+            hiddenCount: 0,
+            frontChild: _LogoPreview(project: _project),
+            // v37: first-time user with no project yet can tap the
+            // Logo tile to kick off generation. After the logo lands
+            // we tap-to-open the viewer instead.
+            onFrontTap: _project == null
+                ? _beginLogoGeneration
+                : (_project!.isReady
+                    ? () => openProjectPreview(
+                        context, widget.apiClient, _project!)
+                    : null),
+          ),
+          const SizedBox(height: 28),
+          _BrandKitSection(
+            title: 'Social carousel',
+            hiddenCount: 0,
+            frontChild: _CarouselPreview(
+              apiClient: widget.apiClient,
+              businessProfileId: widget.businessProfileId,
+            ),
+          ),
+          const SizedBox(height: 28),
+          _BrandKitSection(
+            title: '10-sec brand film',
+            hiddenCount: 0,
+            frontChild: _FilmPreview(
+              apiClient: widget.apiClient,
+              businessProfileId: widget.businessProfileId,
+            ),
+          ),
+          const SizedBox(height: 28),
+          _BrandKitSection(
+            title: 'Website',
+            hiddenCount: 0,
+            frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
+            onFrontTap: _openPricingScreen,
           ),
           const SizedBox(height: 40),
         ],
@@ -2643,4 +2668,3 @@ Color _hexToColor(String hex) {
   final v = int.tryParse('FF$cleaned', radix: 16);
   return v == null ? TamivaColors.textFaint : Color(v);
 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
