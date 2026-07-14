@@ -40,4 +40,13 @@ app.use("/auth", meRouter);
 app.use("/admin", adminRouter);
 app.use("/payments", paymentsRouter);
 
-// Catches errors thrown by route handlers/multer and
+// Catches errors thrown by route handlers/multer and// of Express's default HTML error page.
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(err);
+  res.status(500).json({ error: err.message ?? "Internal server error" });
+});
+
+const port = process.env.PORT ?? 4000;
+app.listen(port, () => {
+  console.log(`Tamiva backend listening on port ${port}`);
+});
