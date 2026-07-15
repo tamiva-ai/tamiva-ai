@@ -933,12 +933,12 @@ class _LogoSupportLockTile extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'We couldn't generate this logo',
+                  'We couldn\'t generate this logo',
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Tap WhatsApp to reach support. We'll start a fresh run once we hear back.',
+                  'Tap WhatsApp to reach support. We\'ll start a fresh run once we hear back.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: TamivaColors.textSecondary,
                       ),
