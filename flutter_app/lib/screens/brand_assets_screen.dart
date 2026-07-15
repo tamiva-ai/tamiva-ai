@@ -1340,6 +1340,12 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
   Project? _project;
   Timer? _pollTimer;
   bool _requestInFlight = false;
+  /// v37.1: wall-clock time the current generation started. Captured
+  /// at the same `setState` that flips `_requestInFlight = true` so
+  /// the `_GeneratingTile` can render an accurate elapsed counter
+  /// even on its first frame (no 00:00 → 00:01 flash). The state is
+  /// non-null only while a generation is in flight.
+  DateTime? _generationStartedAt;
   /// Number of user-visible attempts that have been started. Bumps on
   /// both start-call failures and poll-reported failures. Cleared on
   /// a successful ready state (because once the user has an artifact,
@@ -1472,6 +1478,7 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
     setState(() {
       _requestInFlight = true;
       _attempts += 1;
+      _generationStartedAt = DateTime.now();
     });
     String? projectId;
     try {
@@ -1575,9 +1582,9 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
   Widget build(BuildContext context) {
     // Generate (in-flight request or queued / generating project).
     if (_isGenerating) {
-      return const _GeneratingTile(
-        label: 'Rendering your carousel…',
-        eta: Duration(seconds: 90),
+      return _GeneratingTile(
+        message: 'Your Social Carousel is getting generated…',
+        startedAt: _generationStartedAt ?? DateTime.now(),
       );
     }
     // Ready: show the artifact. The success flag is sticky; once set,
@@ -1937,6 +1944,12 @@ class _FilmPreviewState extends State<_FilmPreview> {
   Project? _project;
   Timer? _pollTimer;
   bool _requestInFlight = false;
+  /// v37.1: wall-clock time the current generation started. Captured
+  /// at the same `setState` that flips `_requestInFlight = true` so
+  /// the `_GeneratingTile` can render an accurate elapsed counter
+  /// even on its first frame. The state is non-null only while a
+  /// generation is in flight.
+  DateTime? _generationStartedAt;
   int _attempts = 0;
   static const int _maxAttempts = 3;
   bool _everSucceeded = false;
@@ -1992,6 +2005,7 @@ class _FilmPreviewState extends State<_FilmPreview> {
     setState(() {
       _requestInFlight = true;
       _attempts += 1;
+      _generationStartedAt = DateTime.now();
     });
     String? projectId;
     try {
@@ -2127,9 +2141,9 @@ class _FilmPreviewState extends State<_FilmPreview> {
   @override
   Widget build(BuildContext context) {
     if (_isGenerating) {
-      return const _GeneratingTile(
-        label: 'Shooting your brand film…',
-        eta: Duration(seconds: 60),
+      return _GeneratingTile(
+        message: 'Your 10-Second Brand Film is getting generated…',
+        startedAt: _generationStartedAt ?? DateTime.now(),
       );
     }
     if (_everSucceeded && _project != null && _project!.assets.isNotEmpty) {
@@ -2422,23 +2436,53 @@ class _FilmReadyPreview extends StatelessWidget {
 
 // Reusable helpers - generating state, error tile, confirmation dialog.
 
-class _GeneratingTile extends StatelessWidget {
-  final String label;
-  final Duration eta;
-  const _GeneratingTile({required this.label, required this.eta});
+class _GeneratingTile extends StatefulWidget {
+  final String message;
+  final DateTime startedAt;
+
+  const _GeneratingTile({
+    required this.message,
+    required this.startedAt,
+  });
+
+  @override
+  State<_GeneratingTile> createState() => _GeneratingTileState();
+}
+
+class _GeneratingTileState extends State<_GeneratingTile> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    // Tick once per second. We don't manually increment a counter;
+    // we compute `now - startedAt` on every tick. That gives the
+    // "elapsed time" semantics for free, and also handles the
+    // backgrounding case correctly: Flutter pauses Timer.periodic
+    // while the app is in the background, and on resume the next
+    // tick simply computes the new wall-clock delta — the user
+    // sees a single jump rather than a fast-forward animation.
+    _ticker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _ticker = null;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // v37.1: replaced the small CircularProgressIndicator with an
-    // indeterminate LinearProgressIndicator. The horizontal bar
-    // reads as a continuous "work is happening" signal across the
-    // whole tile width instead of a tiny spinner in the corner, so
-    // the user keeps the visual cue that the tile is busy from the
-    // first frame of the request all the way through to a real
-    // success or failure response. Combined with the flicker fix
-    // in _CarouselPreviewState/_FilmPreviewState._startGenerationAttempt,
-    // the bar shows up immediately on tap and stays put until the
-    // server responds, never collapsing to the placeholder.
+    final elapsed = DateTime.now().difference(widget.startedAt);
+    final totalSeconds = elapsed.inSeconds < 0 ? 0 : elapsed.inSeconds;
+    final mm = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final ss = (totalSeconds % 60).toString().padLeft(2, '0');
     return ColoredBox(
       color: TamivaColors.surface,
       child: Column(
@@ -2449,7 +2493,7 @@ class _GeneratingTile extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
-              label,
+              widget.message,
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -2458,25 +2502,15 @@ class _GeneratingTile extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ),
-          const SizedBox(height: 12),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
-            child: ClipRRect(
-              borderRadius: BorderRadius.all(Radius.circular(6)),
-              child: LinearProgressIndicator(
-                minHeight: 4,
-                backgroundColor: TamivaColors.divider,
-                valueColor:
-                    AlwaysStoppedAnimation<Color>(TamivaColors.gold),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Text(
-            eta.inSeconds < 60
-                ? '~${eta.inSeconds}s left'
-                : '~${(eta.inSeconds / 60).round()} min left',
-            style: const TextStyle(fontSize: 10, color: TamivaColors.textFaint),
+            '$mm:$ss',
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: TamivaColors.gold,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
           ),
           const SizedBox(height: 14),
         ],
