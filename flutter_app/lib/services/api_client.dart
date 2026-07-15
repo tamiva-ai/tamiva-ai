@@ -7,6 +7,7 @@ import 'package:http_parser/http_parser.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/models.dart';
+import 'api_logger.dart';
 
 /// Talks to the Tamiva backend. Point [baseUrl] at your deployed API.
 ///
@@ -47,7 +48,7 @@ class ApiClient {
   }
 
   ApiClient({required this.baseUrl, http.Client? httpClient})
-    : _http = httpClient ?? http.Client();
+    : _http = LoggingHttpClient(httpClient ?? http.Client());
 
   Future<bool> sendOtp(String phone) async {
     final res = await _http.post(

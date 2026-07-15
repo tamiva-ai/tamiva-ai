@@ -5,6 +5,7 @@ import 'models/models.dart';
 import 'screens/brand_assets_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'services/api_client.dart';
+import 'services/api_logger.dart';
 import 'services/auth_state.dart';
 import 'services/connectivity_service.dart';
 import 'services/draft_store.dart';
@@ -12,6 +13,15 @@ import 'theme/tamiva_theme.dart';
 import 'widgets/offline_banner.dart';
 
 void main() {
+  // v37.1: initialize the global request/response logger once. Defaults
+  // are console-on / remote-off so this is safe to ship to production;
+  // to forward logs to `api.tamiva.in/admin`, flip `enableRemote` and
+  // set `remoteEndpoint` to the admin endpoint.
+  ApiLogger.instance.init(LogConfig(
+    enableConsole: true,
+    enableRemote: false,
+    remoteEndpoint: Uri.parse('https://api.tamiva.in/admin/logs'),
+  ));
   runApp(const TamivaApp());
 }
 
