@@ -184,10 +184,12 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => MultiSelectSheet(
-        title: 'Pick industries',
+        title: 'Pick an industry',
         options: kTamivaIndustries,
         selected: _selectedIndustries,
-        maxSelection: null,
+        // v37.1: single-select - the studio treats industry as a
+        // single defining category, so pick one.
+        maxSelection: 1,
       ),
     );
     if (result != null && mounted) {
@@ -202,10 +204,12 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => MultiSelectSheet(
-        title: 'Pick brand tones',
+        title: 'Pick a brand tone',
         options: kTamivaBrandTones,
         selected: _selectedTones,
-        maxSelection: 2,
+        // v37.1: single-select - one tone reads cleaner than a blend
+        // across the brand kit (logo, carousel, film).
+        maxSelection: 1,
       ),
     );
     if (result != null && mounted) {

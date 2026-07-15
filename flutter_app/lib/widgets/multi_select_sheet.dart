@@ -46,12 +46,24 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
   @override
   void initState() {
     super.initState();
-    _selected = widget.selected.toSet();
+    _selected = _hydrateSelection(widget.selected);
     _searchController.addListener(() {
       setState(() {
         _query = _searchController.text.trim().toLowerCase();
       });
     });
+  }
+
+  /// For single-select pickers, returning users may have multiple
+  /// comma-separated values from a prior schema (e.g. industry was
+  /// previously a multi-select). Keep the first one as a sensible
+  /// default so the UI shows a single radio checked; the user can
+  /// then change it via the new radio behavior.
+  Set<String> _hydrateSelection(List<String> incoming) {
+    if (widget.maxSelection == 1 && incoming.length > 1) {
+      return {incoming.first};
+    }
+    return incoming.toSet();
   }
 
   @override
@@ -60,9 +72,10 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
     // Keep the internal selection in sync if the parent updates
     // widget.selected while the sheet is open.
     if (!_setsEqual(_selected, widget.selected.toSet())) {
+      final next = _hydrateSelection(widget.selected);
       _selected
         ..clear()
-        ..addAll(widget.selected);
+        ..addAll(next);
     }
   }
 
@@ -189,6 +202,16 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
                                   _selected.remove(option);
                                   return;
                                 }
+                                // v37.1: maxSelection == 1 is single-select
+                                // (radio behavior) - tapping any unchecked
+                                // option replaces the existing one instead
+                                // of being blocked with a SnackBar.
+                                if (widget.maxSelection == 1) {
+                                  _selected
+                                    ..clear()
+                                    ..add(option);
+                                  return;
+                                }
                                 if (widget.maxSelection != null &&
                                     _selected.length >= widget.maxSelection!) {
                                   ScaffoldMessenger.of(context).showSnackBar(
@@ -211,9 +234,17 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
                               child: Row(
                                 children: [
                                   Icon(
+                                    // v37.1: radio affordance for
+                                    // single-select pickers (maxSelection
+                                    // == 1) so the user reads the list as
+                                    // "pick one" rather than "tick several".
                                     checked
-                                        ? Icons.check_box
-                                        : Icons.check_box_outline_blank,
+                                        ? (widget.maxSelection == 1
+                                            ? Icons.radio_button_checked
+                                            : Icons.check_box)
+                                        : (widget.maxSelection == 1
+                                            ? Icons.radio_button_unchecked
+                                            : Icons.check_box_outline_blank),
                                     color: checked
                                         ? TamivaColors.gold
                                         : TamivaColors.textFaint,
