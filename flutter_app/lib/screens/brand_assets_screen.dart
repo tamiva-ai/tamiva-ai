@@ -446,6 +446,11 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   Widget build(BuildContext context) {
     return HeroBannerScaffold(
       heroAsset: 'assets/hero/brand_assets.png',
+      // v37.1: disable the top-left back button. Leaving mid-flow would
+      // orphan an in-flight server-side generation and leave the user
+      // without a clear way back to the brand kit. The Logout button
+      // in the actions remains available if they really need to leave.
+      showBackButton: false,
       // v37.1: title flips based on whether the logo is finished. For
       // a fresh user with no logo yet we render the same brand-kit
       // grid (see _buildBody) so the title should already read

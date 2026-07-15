@@ -76,6 +76,13 @@ class HeroBannerScaffold extends StatelessWidget {
   final Widget? bottomBar;
   final List<Widget>? actions;
 
+  /// v37.1: opt-out flag for the automatic back button. `SliverAppBar`
+  /// shows a back arrow whenever there is a route to pop. Set this to
+  /// `false` on screens where leaving mid-flow would lose work or
+  /// orphan a server-side generation (e.g. the brand kit screen
+  /// while a logo/carousel/film is generating).
+  final bool showBackButton;
+
   const HeroBannerScaffold({
     super.key,
     required this.heroAsset,
@@ -83,6 +90,7 @@ class HeroBannerScaffold extends StatelessWidget {
     required this.body,
     this.bottomBar,
     this.actions,
+    this.showBackButton = true,
   });
 
   @override
@@ -96,6 +104,7 @@ class HeroBannerScaffold extends StatelessWidget {
             pinned: true,
             backgroundColor: TamivaColors.background,
             surfaceTintColor: Colors.transparent,
+            automaticallyImplyLeading: showBackButton,
             actions: actions,
             flexibleSpace: FlexibleSpaceBar(
               centerTitle: true,
