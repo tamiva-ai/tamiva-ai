@@ -1390,10 +1390,16 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
     // before the spinner. Setting _requestInFlight=false and
     // _project=queued in the SAME setState keeps _isGenerating
     // true throughout the transition.
+    //
+    // We also promote projectId to a non-nullable local because
+    // Dart's flow analysis can't promote it across the closure
+    // boundary (the Timer callback runs later, after the early
+    // return would have ended analysis).
+    final pid = projectId;
     setState(() {
       _requestInFlight = false;
       _project = Project(
-        id: projectId,
+        id: pid,
         type: 'carousel',
         status: 'queued',
         assets: const [],
@@ -1402,9 +1408,9 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(
       const Duration(seconds: 3),
-      (_) => _poll(projectId),
+      (_) => _poll(pid),
     );
-    _poll(projectId);
+    _poll(pid);
   }
 
   void _startPolling(String projectId, {Project? seed}) {
@@ -1898,10 +1904,15 @@ class _FilmPreviewState extends State<_FilmPreview> {
     // _requestInFlight=false and _project=queued in a single
     // setState keeps _isGenerating true throughout the transition
     // so the placeholder never re-appears between attempts.
+    //
+    // Promote projectId to a non-nullable local so the closure
+    // passed to Timer.periodic captures a String (Dart's flow
+    // analysis can't promote across the closure boundary).
+    final pid = projectId;
     setState(() {
       _requestInFlight = false;
       _project = Project(
-        id: projectId,
+        id: pid,
         type: 'video',
         status: 'queued',
         assets: const [],
@@ -1910,9 +1921,9 @@ class _FilmPreviewState extends State<_FilmPreview> {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(
       const Duration(seconds: 3),
-      (_) => _poll(projectId),
+      (_) => _poll(pid),
     );
-    _poll(projectId);
+    _poll(pid);
   }
 
   void _startPolling(String projectId, {Project? seed}) {
