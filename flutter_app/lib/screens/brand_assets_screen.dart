@@ -1008,185 +1008,103 @@ class _WebsiteLockedPreview extends StatelessWidget {
 /// If the asset isn't on disk (e.g. a developer machine before the
 /// asset is bundled), the widget degrades gracefully to a static
 /// placeholder — no pan, no crash.
-class _WebsiteRollingPreview extends StatefulWidget {
+// v37.1: Website tile in the brand kit now renders a static `.gif`
+// asset (`assets/hero/tamiva_website_preview.gif`) instead of the
+// previous AnimatedBuilder-driven rolling preview. The gif is bundled
+// via `pubspec.yaml` under `flutter.assets: assets/hero/`. Tapping the
+// tile still routes to Pricing — there are no real Website artifacts
+// to open yet, so the gif is the visual preview, not an openable
+// artifact.
+class _WebsiteRollingPreview extends StatelessWidget {
   final VoidCallback onTap;
   const _WebsiteRollingPreview({required this.onTap});
 
-  @override
-  State<_WebsiteRollingPreview> createState() => _WebsiteRollingPreviewState();
-}
-
-class _WebsiteRollingPreviewState extends State<_WebsiteRollingPreview>
-    with SingleTickerProviderStateMixin {
-  static const String _assetPath = 'assets/hero/website_preview.png';
-
-  /// Tile height matches CascadedStack's default so the rolling
-  /// frame fits the brand kit layout.
+  /// v37.1: height matches the other brand-kit tiles so the layout
+  /// doesn't reflow when the gif replaces the rolling preview.
   static const double _tileHeight = 180;
-
-  /// Time the artwork takes to pan from top to bottom once. Long
-  /// enough to feel calm, short enough that a tap-watcher actually
-  /// sees motion.
-  static const Duration _cycleDuration = Duration(seconds: 18);
-
-  /// The artwork is rendered at 2x the tile height; we pan through
-  /// one full tile height so the visible area cycles through
-  /// previously-hidden content and back. A full 2x-height pan
-  /// would leave blank space at the bottom of the tile for half
-  /// the cycle; the 1x pan keeps the visual tile full at all
-  /// times.
-  static const double _panDistance = 180;
-
-  late final AnimationController _controller;
-  bool _imageFailed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: _cycleDuration)
-      ..addStatusListener((status) {
-        // Loop the pan seamlessly: forward = top-to-bottom, reverse
-        // = bottom-to-top. A forward-only loop would snap the asset
-        // back to y=0 and look jarring. Reversing gives a smooth
-        // continuous motion the user reads as "scrolling".
-        if (status == AnimationStatus.completed) {
-          _controller.reverse();
-        } else if (status == AnimationStatus.dismissed) {
-          _controller.forward();
-        }
-      })
-      ..forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  /// Stop the rolling motion in place. After this, the controller
-  /// is held at whatever value it was at when the user tapped, so
-  /// the user lands on the exact frame they were looking at.
-  void _stopAndTap() {
-    if (_controller.isAnimating) {
-      _controller.stop();
-    }
-    widget.onTap();
-  }
 
   @override
   Widget build(BuildContext context) {
-    // Static fallback: the asset isn't bundled. Render a clean
-    // placeholder that still routes to Pricing on tap.
-    if (_imageFailed) {
-      return GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: TamivaColors.surface,
-          alignment: Alignment.center,
-          child: Text(
-            'Tap to choose a plan',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: TamivaColors.gold,
-                ),
-          ),
-        ),
-      );
-    }
-
     return GestureDetector(
-      onTap: _stopAndTap,
+      onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: ClipRect(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(TamivaRadii.md - 1),
         child: SizedBox(
           height: _tileHeight,
           width: double.infinity,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (_, __) {
-              // Forward (0..1): y goes 0 -> -panDistance.
-              // Reverse (1..0): y goes -panDistance -> 0.
-              // Linear easing keeps the motion predictable.
-              final dy = -_panDistance * _controller.value;
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  // The translated artwork. We give it 2x tile height
-                  // so that during the forward half-cycle we reveal
-                  // content that was below the original viewport,
-                  // and during the reverse half-cycle we slide back
-                  // up. Using fitWidth keeps the image at the tile's
-                  // full width and lets the intrinsic aspect ratio
-                  // determine the rendered height; the [height]
-                  // override is a defensive minimum.
-                  Transform.translate(
-                    offset: Offset(0, dy),
-                    child: Image.asset(
-                      _assetPath,
-                      fit: BoxFit.fitWidth,
-                      width: double.infinity,
-                      errorBuilder: (_, __, ___) {
-                        // The bundle resolved the path but decoding
-                        // failed (missing/corrupt asset). Flip to
-                        // the static fallback on the next frame.
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) setState(() => _imageFailed = true);
-                        });
-                        return const SizedBox.shrink();
-                      },
-                    ),
-                  ),
-                  // Bottom scrim so the overlay text reads cleanly
-                  // over any part of the image.
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      height: 56,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            Colors.black.withOpacity(0.55),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 16,
-                    right: 16,
-                    bottom: 14,
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.touch_app_outlined,
-                          color: TamivaColors.gold,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Tap to choose a plan',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelLarge
-                                ?.copyWith(
-                                  color: TamivaColors.textPrimary,
-                                  fontWeight: FontWeight.w700,
-                                ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // The gif artwork. fit: BoxFit.cover preserves the aspect
+              // ratio and crops any overflow — the gif has its own
+              // visual hierarchy so we don't need to slice-and-pan it.
+              Image.asset(
+                'assets/hero/tamiva_website_preview.gif',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) {
+                  // Asset missing or corrupt. Render a clean static
+                  // placeholder that still routes to Pricing so the
+                  // tap target is never dead.
+                  return Container(
+                    color: TamivaColors.surface,
+                    alignment: Alignment.center,
+                    child: Text(
+                      'Tap to choose a plan',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: TamivaColors.gold,
                           ),
-                        ),
+                    ),
+                  );
+                },
+              ),
+              // Bottom scrim so the caption reads cleanly over the
+              // bottom of the gif.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  height: 56,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.55),
                       ],
                     ),
                   ),
-                ],
-              );
-            },
+                ),
+              ),
+              const Positioned(
+                left: 16,
+                right: 16,
+                bottom: 14,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.touch_app_outlined,
+                      color: TamivaColors.gold,
+                      size: 16,
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Coming soon',
+                        style: TextStyle(
+                          color: TamivaColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
