@@ -17,6 +17,74 @@ import '../widgets/logout_action.dart';
 import 'artifacts_screen.dart';
 import 'pricing_screen.dart';
 
+/// v37.1: WhatsApp support number used by the Logo tile failure
+/// paths. Single source of truth for the support chat deep link.
+const String kTamivaSupportWhatsApp = '8296792087';
+
+/// Opens WhatsApp (web or app) with the support chat pre-filled.
+/// Falls back silently if WhatsApp isn't installed - the user can
+/// dial the number manually.
+Future<void> openTamivaSupportWhatsApp(BuildContext context) async {
+  final digits = kTamivaSupportWhatsApp.replaceAll(RegExp(r'[^0-9]'), '');
+  final messenger = ScaffoldMessenger.of(context);
+  final uri = Uri.parse('https://wa.me/91' + digits);
+  final launched =
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!launched && context.mounted) {
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text(
+          "Couldn't open WhatsApp. Please message " + kTamivaSupportWhatsApp + " directly.",
+        ),
+      ),
+    );
+  }
+}
+
+/// Tappable WhatsApp icon pill. Used on the Logo tile's failure and
+/// support-lock states so the user has one consistent way to reach
+/// support regardless of whether retries are still available.
+class _TamivaWhatsAppButton extends StatelessWidget {
+  final String? label;
+  const _TamivaWhatsAppButton({this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF25D366),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => openTamivaSupportWhatsApp(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.chat_bubble_outline,
+                color: Colors.white,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              if (label != null)
+                Text(
+                  label!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Routes to the right full-screen viewer for a finished Project,
 /// based on its [Project.type]. When the project isn't ready or has no
 /// assets yet, surfaces a SnackBar with the reason rather than failing
@@ -158,6 +226,22 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   DateTime? _generationStartedAt;
   static const Duration kMaxGenerationDuration = Duration(minutes: 6);
 
+  // v37.1: independent retry counter for the Logo generation path.
+  // Bumps every time [_beginLogoGeneration] fires (both successful
+  // createLogoProject calls and immediate client-side failures count).
+  // Resets to 0 the moment a successful logo is delivered (lock-on-
+  // success). When [_logoAttempts] reaches [_logoMaxAttempts] without
+  // any successful logo, the Logo tile renders the support-only
+  // fallback permanently - further taps are dropped.
+  int _logoAttempts = 0;
+  static const int _logoMaxAttempts = 3;
+  bool get _logoLockedBehindSupport =>
+      !_logoReady &&
+      _project != null &&
+      _project!.isFailed &&
+      _logoAttempts >= _logoMaxAttempts;
+
+
   @override
   void initState() {
     super.initState();
@@ -231,12 +315,24 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   /// or the error-screen retry). Guards against double-fire and wires
   /// the new project into this screen's own polling so the reveal
   /// triggers when the logo lands.
+  ///
+  /// v37.1: bumps [_logoAttempts] on every fire and refuses to fire
+  /// when [_logoLockedBehindSupport] is true. The cap is independent
+  /// per the spec ("each widget keeps its own retry count") and is
+  /// cleared automatically when a successful logo lands.
   Future<void> _beginLogoGeneration() async {
     if (_startingLogo) return;
+    if (_logoLockedBehindSupport) return;
     setState(() {
       _startingLogo = true;
       _error = null;
       _generationStartedAt = DateTime.now();
+      _logoAttempts += 1;
+      // Clear the previous failed project so the tile shows the
+      // in-flight spinner cleanly instead of briefly re-rendering
+      // the prior failure row.
+      _project = null;
+      _projectId = null;
     });
     try {
       final projectId = await widget.apiClient.createLogoProject(
@@ -264,7 +360,15 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     try {
       final project = await widget.apiClient.getProject(_projectId!);
       if (!mounted) return;
-      setState(() => _project = project);
+      // v37.1: a successful logo permanently locks that widget per
+      // the spec ("a successful generation locks that widget
+      // permanently"). Reset the retry counter so the tile stays
+      // open and the cap can never re-engage.
+      final succeeded = project.isReady && project.assets.isNotEmpty;
+      setState(() {
+        _project = project;
+        if (succeeded) _logoAttempts = 0;
+      });
       if (project.isReady || project.isFailed) {
         _pollTimer?.cancel();
       } else if (project.isInProgress && _generationStartedAt != null) {
@@ -519,8 +623,15 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             // "Generating your logo · ..." tile the
             // post-bootstrap in-progress state shows, so the user
             // sees one continuous flow.
-            frontChild: (_project == null && _startingLogo)
-                ? Container(
+            frontChild: _logoLockedBehindSupport
+                ? const _LogoSupportLockTile()
+                : (_project != null && _project!.isFailed
+                    ? _LogoFailedTile(
+                        attemptsLeft: _logoMaxAttempts - _logoAttempts,
+                        onTap: _beginLogoGeneration,
+                      )
+                    : ((_project == null && _startingLogo)
+                        ? Container(
                     color: TamivaColors.surface,
                     child: const Center(
                       child: Column(
@@ -543,17 +654,20 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
                         ],
                       ),
                     ),
-                  )
-                : _LogoPreview(project: _project),
+)
+                        : _LogoPreview(project: _project, starting: _startingLogo))),
+
             // v37: first-time user with no project yet can tap the
             // Logo tile to kick off generation. After the logo lands
             // we tap-to-open the viewer instead.
-            onFrontTap: _project == null
-                ? (_startingLogo ? null : _beginLogoGeneration)
-                : (_project!.isReady
-                    ? () => openProjectPreview(
-                        context, widget.apiClient, _project!)
-                    : null),
+            onFrontTap: _logoLockedBehindSupport
+                ? null
+                : (_project == null
+                    ? (_startingLogo ? null : _beginLogoGeneration)
+                    : (_project!.isReady
+                        ? () => openProjectPreview(
+                            context, widget.apiClient, _project!)
+                        : null)),
           ),
           const SizedBox(height: 28),
           _BrandKitSection(
@@ -629,10 +743,46 @@ class _BrandKitSection extends StatelessWidget {
 
 class _LogoPreview extends StatelessWidget {
   final Project? project;
-  const _LogoPreview({required this.project});
+
+  /// v37.1: when [starting] is true the backend hasn't returned the
+  /// new project yet, so [project] is still null. Render the spinner
+  /// instead of the "Tap to generate" CTA so the user sees one
+  /// continuous flow on retry rather than a flash of the idle state.
+  final bool starting;
+
+  const _LogoPreview({
+    required this.project,
+    this.starting = false,
+  });
 
   @override
   Widget build(BuildContext context) {
+    // In-flight retry: project is briefly null while a new request
+    // is in flight. Show the spinner so the user doesn't see the
+    // idle "Tap to generate" CTA flash for a frame.
+    if (project == null && starting) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(height: 10),
+              Text(
+                'Generating your logo…',
+                style: TextStyle(fontSize: 12, color: TamivaColors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     // First-time user with no logo yet — show the tap-to-generate CTA
     // inline so the brand kit reveal makes sense from the first screen.
     if (project == null) {
@@ -696,6 +846,112 @@ class _LogoPreview extends StatelessWidget {
   }
 }
 
+
+
+/// v37.1: shown when the Logo project failed but the user still has
+/// retries remaining. The WhatsApp pill is always visible - even
+/// while retries remain - because support is always useful.
+class _LogoFailedTile extends StatelessWidget {
+  final int attemptsLeft;
+
+  /// Tapping the row body retries. WhatsApp pill has its own onTap.
+  final VoidCallback onTap;
+
+  const _LogoFailedTile({
+    required this.attemptsLeft,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final remainingLabel = attemptsLeft > 0
+        ? 'Tap to retry · $attemptsLeft attempt${attemptsLeft == 1 ? '' : 's'} left'
+        : 'No retries left · contact support';
+    return Container(
+      color: TamivaColors.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            color: TamivaColors.error,
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: attemptsLeft > 0 ? onTap : null,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Logo generation failed',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    remainingLabel,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: TamivaColors.textSecondary,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const _TamivaWhatsAppButton(),
+        ],
+      ),
+    );
+  }
+}
+
+/// v37.1: shown after the user has burned through the logo retry
+/// cap with no success. Pure support-only fallback - tap-to-retry
+/// is disabled; the WhatsApp pill is the only remaining action.
+class _LogoSupportLockTile extends StatelessWidget {
+  const _LogoSupportLockTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: TamivaColors.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.support_agent_outlined,
+            color: TamivaColors.gold,
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'We couldn't generate this logo',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Tap WhatsApp to reach support. We'll start a fresh run once we hear back.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: TamivaColors.textSecondary,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const _TamivaWhatsAppButton(label: 'Support'),
+        ],
+      ),
+    );
+  }
+}
 /// v37: Locked placeholder shown in the Website _BrandKitSection.
 /// Tapping anywhere on it opens the Pricing screen.
 class _WebsiteLockedPreview extends StatelessWidget {
