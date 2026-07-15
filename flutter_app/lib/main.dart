@@ -19,7 +19,7 @@ void main() {
   // set `remoteEndpoint` to the admin endpoint.
   ApiLogger.instance.init(LogConfig(
     enableConsole: true,
-    enableRemote: false,
+    enableRemote: true,
     remoteEndpoint: Uri.parse('https://api.tamiva.in/admin/logs'),
   ));
   runApp(const TamivaApp());
