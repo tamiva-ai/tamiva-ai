@@ -14,7 +14,6 @@ import '../widgets/cascaded_stack.dart';
 import '../widgets/full_screen_error.dart';
 import '../widgets/hero_scaffold.dart';
 import '../widgets/logout_action.dart';
-import '../widgets/generation_status_board.dart';
 import 'artifacts_screen.dart';
 import 'pricing_screen.dart';
 
@@ -291,92 +290,6 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     }
   }
 
-  /// Centralized handler for taps on the GenerationStatusBoard rows.
-/// Dispatches based on [artifactKey] and current [project] state.
-///
-/// v37+: once a project has ever been started, the first click is
-/// what creates it; subsequent clicks never re-trigger generation.
-/// That keeps the "tap to generate" promise honest — the user spends
-/// their one free generation on the first click, and from then on
-/// taps simply open the existing artifact (or, for a failed run
-/// with no assets, surface the failure instead of silently starting
-/// another run).
-  Future<void> _handleStatusBoardTap(String artifactKey, Project? project) async {
-    switch (artifactKey) {
-      case 'logo':
-        // Logo is intentionally exempt from the "never restart" rule:
-        // a failed logo has no asset to view, so retry is the only
-        // useful action. First click starts the run, second click
-        // (after ready) opens the preview, any subsequent tap on a
-        // failed row retries.
-        if (project != null && project.isReady) {
-          await openProjectPreview(context, widget.apiClient, project);
-        } else if (project == null || project.isFailed) {
-          await _beginLogoGeneration();
-        }
-        return;
-      case 'carousel':
-        if (project == null) {
-          // First tap ever for this profile — kick off the run.
-          await startCarouselGeneration(
-            context: context,
-            apiClient: widget.apiClient,
-            businessProfileId: widget.businessProfileId,
-          );
-        } else if (project.isReady && project.assets.isNotEmpty) {
-          await openProjectPreview(context, widget.apiClient, project);
-        } else if (project.isInProgress) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Carousel is still generating.')),
-          );
-        } else {
-          // Failed (with or without assets). Don't restart — surface
-          // the artifact if any, otherwise the failure state. Tapping
-          // again should not silently start a new run.
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                project.assets.isNotEmpty
-                    ? 'Carousel generation finished with partial assets — opening what we have.'
-                    : 'Carousel generation failed. Open the brand kit to retry.',
-              ),
-            ),
-          );
-        }
-        return;
-      case 'film':
-        if (project == null) {
-          await startFilmGeneration(
-            context: context,
-            apiClient: widget.apiClient,
-            businessProfileId: widget.businessProfileId,
-          );
-        } else if (project.isReady && project.assets.isNotEmpty) {
-          await openProjectPreview(context, widget.apiClient, project);
-        } else if (project.isInProgress) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Film is still generating.')),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                project.assets.isNotEmpty
-                    ? 'Film generation finished with partial assets — opening what we have.'
-                    : 'Film generation failed. Open the brand kit to retry.',
-              ),
-            ),
-          );
-        }
-        return;
-      case 'website':
-        // v37: website is a paid feature. Tap routes to the new
-        // pricing screen so the user can pick a plan.
-        await _openPricingScreen();
-        return;
-    }
-  }
-
   /// Pushes the new Pricing screen. Used by the Upgrade button and by
   /// the Website tile (locked feature).
   Future<void> _openPricingScreen() async {
@@ -425,10 +338,10 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   Widget build(BuildContext context) {
     return HeroBannerScaffold(
       heroAsset: 'assets/hero/brand_assets.png',
-      // v37.1: title flips based on whether the logo is finished.
-      // For a fresh user with no logo yet we land directly on the
-      // GenerationStatusBoard (see _buildBody) so the title should
-      // already read "Generating your brand…".
+      // v37.1: title flips based on whether the logo is finished. For
+      // a fresh user with no logo yet we render the same brand-kit
+      // grid (see _buildBody) so the title should already read
+      // "Generating your brand…".
       title: _logoReady
           ? 'Your brand kit'
           : 'Generating your brand…',
@@ -555,47 +468,30 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
       );
     }
 
-    // No logo project yet. v37.1: skip the standalone "Generate your
-    // logo" CTA and drop the user straight onto the live
-    // GenerationStatusBoard. Each tile (Logo / Carousel / Film /
-    // Website) renders in its notStarted state with a "Tap to
-    // generate" hint; tapping the Logo tile routes through
-    // _handleStatusBoardTap → _beginLogoGeneration, which sets
-    // _projectId and kicks off polling. The title flips from
-    // "Your brand kit" to "Generating your brand…" the moment
-    // _projectId becomes non-null (see build()).
-    if (_projectId == null) {
-      return GenerationStatusBoard(
-        apiClient: widget.apiClient,
-        businessProfileId: widget.businessProfileId,
-        onRowTap: (artifactKey, project) =>
-            _handleStatusBoardTap(artifactKey, project),
-      );
-    }
-
-    if (!_logoReady && _projectId == null) {
-      // v37: first-time user with no logo yet — show the full 4-tile
-      // reveal so they see the entire studio at a glance, instead of
-      // a single "Generate your logo" CTA. The Logo tile itself is
-      // empty (no project), and tapping it kicks off generation;
-      // the lower three tiles use their own preview widgets which
-      // bootstrap from the server and render placeholders until the
-      // user requests each artifact. The carousel/film/website tiles
-      // all work the same way whether the logo exists or not.
-      // Fall through to the reveal list below.
-      // (No early return — keep showing the 4 tiles.)
-    } else if (!_logoReady) {
-      // Logo was started but isn't done yet — surface the live status
-      // board so the user can see the progress of the in-flight
-      // generation. Once the logo lands, this view is replaced by
-      // the full brand-kit reveal below.
-      return GenerationStatusBoard(
-        apiClient: widget.apiClient,
-        businessProfileId: widget.businessProfileId,
-        onRowTap: (artifactKey, project) =>
-            _handleStatusBoardTap(artifactKey, project),
-      );
-    }
+    // v37.1: regardless of whether the user has a logo project yet,
+    // we always render the same 4-tile brand-kit grid below. The
+    // grid is state-aware:
+    //   * Logo tile    - _LogoPreview(project) shows either the
+    //                    "Tap to generate · 1 free logo" CTA (when
+    //                    _project == null), the spinner
+    //                    ("Generating your logo · ..."), or
+    //                    the finished image, depending on _project.
+    //                    _BrandKitSection.onFrontTap dispatches to
+    //                    _beginLogoGeneration() or openProjectPreview
+    //                    based on _logoReady.
+    //   * Carousel     - _CarouselPreview self-bootstraps from the
+    //                    server on mount and drives its own
+    //                    idle/in-progress/ready/failed state machine.
+    //   * Film         - mirrors carousel.
+    //   * Website      - locked Pro feature; routes to Pricing.
+    // The earlier standalone "Generate your logo" CTA screen and the
+    // GenerationStatusBoard row list are both intentionally removed:
+    // they're redundant with what the grid already shows, and
+    // presenting them as a separate first screen breaks the user's
+    // expectation that the studio is one continuous experience.
+    //
+    // (No early return — keep showing the 4 tiles for every
+    // combination of _projectId / _logoReady.)
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
@@ -607,19 +503,53 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
           Text(
             _logoReady
                 ? "Here's your starter kit. Unlock the full studio when you're ready."
-                : 'Tamiva is generating your kit. Free previews will appear here as each one finishes.',
+                : (_projectId == null
+                    ? "Tap any tile to start. Free previews land here as each one finishes."
+                    : 'Tamiva is generating your kit. Free previews will appear here as each one finishes.'),
             style: textTheme.bodyMedium,
           ),
           const SizedBox(height: 28),
           _BrandKitSection(
             title: 'Logo',
             hiddenCount: 0,
-            frontChild: _LogoPreview(project: _project),
+            // v37.1: while _beginLogoGeneration is in flight the
+            // backend hasn't returned the project yet, so _project
+            // is still null. _LogoPreview would briefly render the
+            // "Tap to generate" CTA in that window. Show the same
+            // "Generating your logo · ..." tile the
+            // post-bootstrap in-progress state shows, so the user
+            // sees one continuous flow.
+            frontChild: (_project == null && _startingLogo)
+                ? Container(
+                    color: TamivaColors.surface,
+                    child: const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            height: 24,
+                            width: 24,
+                            child:
+                                CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(height: 10),
+                          Text(
+                            'Generating your logo · ...',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: TamivaColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : _LogoPreview(project: _project),
             // v37: first-time user with no project yet can tap the
             // Logo tile to kick off generation. After the logo lands
             // we tap-to-open the viewer instead.
             onFrontTap: _project == null
-                ? _beginLogoGeneration
+                ? (_startingLogo ? null : _beginLogoGeneration)
                 : (_project!.isReady
                     ? () => openProjectPreview(
                         context, widget.apiClient, _project!)
