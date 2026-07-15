@@ -640,30 +640,10 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
                         onTap: _beginLogoGeneration,
                       )
                     : ((_project == null && _startingLogo)
-                        ? Container(
-                    color: TamivaColors.surface,
-                    child: const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            height: 24,
-                            width: 24,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          SizedBox(height: 10),
-                          Text(
-                            'Generating your logo · ...',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: TamivaColors.textSecondary),
-                          ),
-                        ],
-                      ),
-                    ),
-)
+                        ? _GeneratingTile(
+                            message: 'Your Logo is getting generated\xe2\x80\xa6',
+                            startedAt: _generationStartedAt ?? DateTime.now(),
+                          )
                         : _LogoPreview(project: _project, starting: _startingLogo))),
 
             // v37: first-time user with no project yet can tap the
