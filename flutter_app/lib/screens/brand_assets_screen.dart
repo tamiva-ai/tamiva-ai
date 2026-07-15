@@ -425,7 +425,11 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   Widget build(BuildContext context) {
     return HeroBannerScaffold(
       heroAsset: 'assets/hero/brand_assets.png',
-      title: (_logoReady || _projectId == null)
+      // v37.1: title flips based on whether the logo is finished.
+      // For a fresh user with no logo yet we land directly on the
+      // GenerationStatusBoard (see _buildBody) so the title should
+      // already read "Generating your brand…".
+      title: _logoReady
           ? 'Your brand kit'
           : 'Generating your brand…',
       actions: [LogoutAction(apiClient: widget.apiClient)],
@@ -551,36 +555,21 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
       );
     }
 
-    // No logo project yet. Show an explicit "Generate your logo" CTA
-    // instead of silently auto-firing on mount — the user chooses when
-    // to spend their one free generation, and sees clear feedback.
+    // No logo project yet. v37.1: skip the standalone "Generate your
+    // logo" CTA and drop the user straight onto the live
+    // GenerationStatusBoard. Each tile (Logo / Carousel / Film /
+    // Website) renders in its notStarted state with a "Tap to
+    // generate" hint; tapping the Logo tile routes through
+    // _handleStatusBoardTap → _beginLogoGeneration, which sets
+    // _projectId and kicks off polling. The title flips from
+    // "Your brand kit" to "Generating your brand…" the moment
+    // _projectId becomes non-null (see build()).
     if (_projectId == null) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(28, 40, 28, 28),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(Icons.auto_awesome, size: 44, color: TamivaColors.gold),
-            const SizedBox(height: 20),
-            Text('Generate your logo',
-                textAlign: TextAlign.center, style: textTheme.titleLarge),
-            const SizedBox(height: 10),
-            Text(
-              "We'll craft a clean, modern mark from your business profile. "
-              "This is your 1 free logo.",
-              textAlign: TextAlign.center,
-              style: textTheme.bodyMedium
-                  ?.copyWith(color: TamivaColors.textSecondary),
-            ),
-            const SizedBox(height: 28),
-            GradientCtaButton(
-              onPressed: _startingLogo ? null : _beginLogoGeneration,
-              loading: _startingLogo,
-              child: const Text('Generate logo'),
-            ),
-          ],
-        ),
+      return GenerationStatusBoard(
+        apiClient: widget.apiClient,
+        businessProfileId: widget.businessProfileId,
+        onRowTap: (artifactKey, project) =>
+            _handleStatusBoardTap(artifactKey, project),
       );
     }
 
