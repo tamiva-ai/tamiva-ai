@@ -76,13 +76,6 @@ class HeroBannerScaffold extends StatelessWidget {
   final Widget? bottomBar;
   final List<Widget>? actions;
 
-  /// v37.1: opt-out flag for the automatic back button. `SliverAppBar`
-  /// shows a back arrow whenever there is a route to pop. Set this to
-  /// `false` on screens where leaving mid-flow would lose work or
-  /// orphan a server-side generation (e.g. the brand kit screen
-  /// while a logo/carousel/film is generating).
-  final bool showBackButton;
-
   const HeroBannerScaffold({
     super.key,
     required this.heroAsset,
@@ -90,64 +83,89 @@ class HeroBannerScaffold extends StatelessWidget {
     required this.body,
     this.bottomBar,
     this.actions,
-    this.showBackButton = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      bottomNavigationBar: bottomBar,
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            expandedHeight: 200,
-            pinned: true,
-            backgroundColor: TamivaColors.background,
-            surfaceTintColor: Colors.transparent,
-            automaticallyImplyLeading: showBackButton,
-            actions: actions,
-            flexibleSpace: FlexibleSpaceBar(
-              centerTitle: true,
-              titlePadding: const EdgeInsets.fromLTRB(56, 0, 56, 16),
-              title: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.asset(
-                    heroAsset,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const _FallbackGradient(),
+    // v37.1: deterministic back behavior. The SliverAppBar's default
+    // `BackButton` (and the OS back gesture) both call
+    // `Navigator.maybePop()`. If there is no route to pop, we fall
+    // through to `SystemNavigator.pop()` so the app exits to the
+    // launcher cleanly. This makes the in-app arrow and the OS back
+    // gesture behave identically, and ensures a free user on the
+    // root screen lands on the launcher instead of getting stuck.
+    return PopScope(
+      canPop: false, // we always handle pop ourselves for deterministic behavior
+      onPopInvokedWithResult: (didPop, _) async {
+        final navigator = Navigator.maybeOf(context);
+        if (navigator == null) {
+          // ignore: deprecated_member_use
+          await SystemNavigator.pop();
+          return;
+        }
+        final popped = await navigator.maybePop();
+        if (!popped) {
+          // No more routes — close the app to launcher.
+          // ignore: deprecated_member_use
+          await SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+        bottomNavigationBar: bottomBar,
+        body: CustomScrollView(
+          slivers: [
+            SliverAppBar(
+              expandedHeight: 200,
+              pinned: true,
+              backgroundColor: TamivaColors.background,
+              surfaceTintColor: Colors.transparent,
+              // Back arrow is now always shown (no toggle). PopScope
+              // above handles whether tapping it pops a route or
+              // closes the app.
+              actions: actions,
+              flexibleSpace: FlexibleSpaceBar(
+                centerTitle: true,
+                titlePadding: const EdgeInsets.fromLTRB(56, 0, 56, 16),
+                title: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x000A0A0D),
-                          Color(0xE60A0A0D),
-                        ],
-                        stops: [0.35, 1.0],
+                ),
+                background: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.asset(
+                      heroAsset,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const _FallbackGradient(),
+                    ),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x000A0A0D),
+                            Color(0xE60A0A0D),
+                          ],
+                          stops: [0.35, 1.0],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-          SliverSafeArea(
-            top: false,
-            sliver: SliverToBoxAdapter(child: body),
-          ),
-        ],
+            SliverSafeArea(
+              top: false,
+              sliver: SliverToBoxAdapter(child: body),
+            ),
+          ],
+        ),
       ),
     );
   }
