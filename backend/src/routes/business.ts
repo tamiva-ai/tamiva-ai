@@ -215,4 +215,78 @@ businessRouter.put("/by-user/:userId", async (req, res) => {
 
   const existing = await prisma.businessProfile.findFirst({
     where: { userId: req.params.userId },
-    orderBy: { created
+    orderBy: { createdAt: "asc" },
+  });
+  if (!existing) return res.status(404).json({ error: "No existing profile" });
+
+  const updated = await prisma.businessProfile.update({
+    where: { id: existing.id },
+    data: {
+      name: parsed.data.name,
+      industry: parsed.data.industry,
+      tagline: parsed.data.tagline ?? null,
+      tone: parsed.data.tone ?? null,
+      palettePreference: parsed.data.palettePreference ?? null,
+      fontPreference: parsed.data.fontPreference ?? null,
+    },
+  });
+
+  if (parsed.data.photoUrls !== undefined) {
+    const existingAmb = await prisma.brandAmbassador.findMany({
+      where: { businessProfileId: existing.id },
+    });
+
+    if (parsed.data.photoUrls.length > 0) {
+      if (existingAmb.length > 0) {
+        await prisma.brandAmbassador.update({
+          where: { id: existingAmb[0].id },
+          data: {
+            photoUrls: parsed.data.photoUrls,
+            angleLabels: parsed.data.angleLabels ?? [],
+          },
+        });
+      } else {
+        await prisma.brandAmbassador.create({
+          data: {
+            businessProfileId: existing.id,
+            photoUrls: parsed.data.photoUrls,
+            angleLabels: parsed.data.angleLabels ?? [],
+          },
+        });
+      }
+    } else {
+      for (const a of existingAmb) {
+        await prisma.brandAmbassador.delete({ where: { id: a.id } });
+      }
+    }
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { tier: "free", tierUpdatedAt: new Date() },
+  });
+
+  res.status(200).json({ profile: updated });
+});
+
+const addAmbassadorSchema = z.object({
+  photoUrls: z.array(z.string().url()).min(1),
+  angleLabels: z.array(z.string()).optional(),
+});
+
+businessRouter.post("/:id/ambassadors", async (req, res) => {
+  const parsed = addAmbassadorSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const ambassador = await prisma.brandAmbassador.create({
+      data: {
+      businessProfileId: req.params.id,
+      photoUrls: parsed.data.photoUrls,
+      angleLabels: parsed.data.angleLabels ?? [],
+    },
+  });
+
+  res.status(201).json(ambassador);
+});
