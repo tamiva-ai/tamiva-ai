@@ -1,0 +1,7 @@
+{
+  "$schema": "https://schema.railpack.com/railpack-plan.json",
+  "provider": "node",
+  "build": {
+    "rootDir": "backend"
+  }
+}
