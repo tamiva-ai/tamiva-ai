@@ -245,9 +245,7 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
       // a fresh user with no logo yet we render the same brand-kit
       // grid (see _buildBody) so the title should already read
       // "Generating your brand…".
-      title: _logoReady
-          ? 'Your brand kit'
-          : 'Generating your brand…',
+      title: 'Your brand kit',
       actions: [LogoutAction(apiClient: widget.apiClient)],
       bottomBar: SafeArea(
         child: Padding(
@@ -308,116 +306,17 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   }
 
   Widget _buildBody(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-
-    if (_error != null) {
-      return FullScreenError(
-        error: _error!,
-        onRetry: () {
-          setState(() {
-            _error = null;
-            _project = null;
-            _projectId = null;
-          });
-          _beginLogoGeneration();
-        },
-      );
-    }
-
-    // Still checking the backend for an existing logo — brief spinner so
-    // we never flash the CTA and then swap it for the status board.
-    if (_bootstrapping) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    // v36 / S1.3 — bootstrap fetch failed. Show a distinct retry state
-    // instead of the misleading "no logo" CTA.
-    if (_bootstrapFailed) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(28, 40, 28, 28),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(Icons.cloud_off_outlined,
-                size: 44, color: TamivaColors.gold),
-            const SizedBox(height: 20),
-            Text(
-              "Couldn't reach the studio",
-              textAlign: TextAlign.center,
-              style: textTheme.titleLarge,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              "Check your connection and tap retry. We don't know whether "
-              "you already have a logo until the studio answers.",
-              textAlign: TextAlign.center,
-              style: textTheme.bodyMedium
-                  ?.copyWith(color: TamivaColors.textSecondary),
-            ),
-            const SizedBox(height: 28),
-            GradientCtaButton(
-              onPressed: () {
-                setState(() {
-                  _bootstrapFailed = false;
-                  _bootstrapping = true;
-                });
-                _bootstrapLogo();
-              },
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // v37.1: regardless of whether the user has a logo project yet,
-    // we always render the same 4-tile brand-kit grid below. The
-    // grid is state-aware:
-    //   * Logo tile    - _LogoPreview(project) shows either the
-    //                    "Tap to generate · 1 free logo" CTA (when
-    //                    _project == null), the spinner
-    //                    ("Generating your logo · ..."), or
-    //                    the finished image, depending on _project.
-    //                    _BrandKitSection.onFrontTap dispatches to
-    //                    _beginLogoGeneration() or openProjectPreview
-    //                    based on _logoReady.
-    //   * Carousel     - _CarouselPreview self-bootstraps from the
-    //                    server on mount and drives its own
-    //                    idle/in-progress/ready/failed state machine.
-    //   * Film         - mirrors carousel.
-    //   * Website      - locked Pro feature; routes to Pricing.
-    // The earlier standalone "Generate your logo" CTA screen and the
-    // GenerationStatusBoard row list are both intentionally removed:
-    // they're redundant with what the grid already shows, and
-    // presenting them as a separate first screen breaks the user's
-    // expectation that the studio is one continuous experience.
-    //
-    // (No early return — keep showing the 4 tiles for every
-    // combination of _projectId / _logoReady.)
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('YOUR BRAND KIT', style: textTheme.labelMedium),
-          const SizedBox(height: 8),
-          Text(
-            "Here's your starter kit. Unlock the full studio when you're ready.",
-            style: textTheme.bodyMedium,
-          ),
-          ),
+          Text("Here's your starter kit. Unlock the full studio when you're ready.",
+              style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 28),
-          _BrandKitSection(
           _BrandKitSection(
             title: 'Logo',
             hiddenCount: 0,
-            // v37.1: same architecture as the Carousel and Film tiles -
-            // a self-contained _LogoPreview that owns its own state
-            // machine (idle / starting / in-flight / ready / failed /
-            // support-lock). The Brand Kit only passes the API client
-            // and the profile id; everything else is owned locally.
             frontChild: _LogoPreview(
               apiClient: widget.apiClient,
               businessProfileId: widget.businessProfileId,
@@ -447,11 +346,28 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             hiddenCount: 0,
             frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
             onFrontTap: _openPricingScreen,
+            showFreePill: false,
           ),
           const SizedBox(height: 40),
         ],
       ),
     );
+  }
+
+  /// Pushes the new Pricing screen. Used by the Upgrade button and by
+  /// the Website tile (locked feature).
+  Future<void> _openPricingScreen() async {
+    final upgraded = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => PricingScreen(
+          apiClient: widget.apiClient,
+        ),
+      ),
+    );
+    if (upgraded == true && mounted) {
+      // Refresh tier + rebuild so any paid-only UI unlocks immediately.
+      await _refreshTier();
+    }
   }
 }
 
@@ -642,7 +558,7 @@ class _LogoPreviewState extends State<_LogoPreview> {
     }
     setState(() {
       _project = Project(
-        id: projectId,
+        id: projectId!,
         type: 'logo',
         status: 'queued',
         assets: const [],
@@ -651,7 +567,7 @@ class _LogoPreviewState extends State<_LogoPreview> {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(
       const Duration(seconds: 3),
-      (_) => _poll(projectId),
+      (_) => _poll(projectId!),
     );
     _poll(projectId);
   }
@@ -667,7 +583,7 @@ class _LogoPreviewState extends State<_LogoPreview> {
         ));
     _pollTimer = Timer.periodic(
       const Duration(seconds: 3),
-      (_) => _poll(projectId),
+      (_) => _poll(projectId!),
     );
     _poll(projectId);
   }
