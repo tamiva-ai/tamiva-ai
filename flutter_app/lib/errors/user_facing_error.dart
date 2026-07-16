@@ -162,4 +162,33 @@ class UserFacingError {
           title: 'Studio hiccup',
           message: "The studio is catching up. This usually clears in a few seconds.",
         );
-      defaul
+      default:
+        return UserFacingError(
+          title: "Couldn't ${_pastToInfinitive(operation)}",
+          message: backendMessage ?? 'Something unexpected happened. Try again in a moment.',
+        );
+    }
+  }
+
+  /// Extract a friendly error string from the backend's JSON body.
+  /// Backends returning `{"error": "..."}` are common; if the body is
+  /// something weirder we bail out and let the caller pick a generic
+  /// message.
+  static String? _extractBackendMessage(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['error'] is String) {
+        final msg = decoded['error'] as String;
+        // Guard against backend leaking stack traces or internals.
+        if (msg.length < 200 && !msg.contains('at ')) return msg;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static String _pastToInfinitive(String operation) {
+    // "sign in" stays "sign in"; the caller already passes the base
+    // verb phrase. Trim any trailing punctuation just in case.
+    return operation.replaceAll(RegExp(r'[.!?]+$'), '');
+  }
+}

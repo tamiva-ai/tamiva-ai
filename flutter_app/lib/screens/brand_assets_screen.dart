@@ -2887,3 +2887,23 @@ class _LogoViewerScreenState extends State<_LogoViewerScreen> {
                 errorWidget: (_, __, ___) => const Center(
                   child: Icon(Icons.broken_image,
                       color: TamivaColors.textFaint, size: 32),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// (v37) Brand Colors + Typography detail widgets removed. The
+// signup-time palette / typography preferences remain on BusinessProfile;
+// only the dashboard surfaces were dropped.
+
+// v37: hex-to-color helper retained as a no-dependency utility.
+Color _hexToColor(String hex) {
+  final cleaned = hex.replaceFirst('#', '');
+  final v = int.tryParse('FF$cleaned', radix: 16);
+  return v == null ? TamivaColors.textFaint : Color(v);
+}

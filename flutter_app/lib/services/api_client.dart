@@ -655,4 +655,29 @@ class BusinessProfileJobSummary {
   factory BusinessProfileJobSummary.fromJson(Map<String, dynamic> json) {
     return BusinessProfileJobSummary(
       stage: json['stage'] as String,
-      provider: json['provider'] as Str
+      provider: json['provider'] as String,
+      status: json['status'] as String,
+      error: json['error'] as String?,
+    );
+  }
+}
+
+class RazorpayOrder {
+  final String orderId;
+  final int amount; // in paise
+  final String currency;
+  final String keyId;
+  final String userId;
+  // v37: server echoes the resolved plan so callers can show the right
+  // post-purchase confirmation without re-resolving it.
+  final String? plan;
+
+  const RazorpayOrder({
+    required this.orderId,
+    required this.amount,
+    required this.currency,
+    required this.keyId,
+    required this.userId,
+    this.plan,
+  });
+}
