@@ -403,17 +403,32 @@ class ApiClient {
     int slideCount = 5,
     String? idempotencyKey,
   }) async {
+    final body = <String, dynamic>{
+      'businessProfileId': businessProfileId,
+      'slideCount': slideCount,
+    };
+    // Only include `topic` when non-null. The backend Zod schema treats
+    // `topic: z.string().min(1).optional()` as accepting missing keys
+    // but rejecting nulls - sending {"topic": null} triggers a 400.
+    if (topic != null) body['topic'] = topic;
+
     final res = await _http.post(
       Uri.parse('$baseUrl/projects/carousel'),
       headers: _baseHeaders(idempotencyKey: _newIdempotencyKey(idempotencyKey)),
-      body: jsonEncode({
-        'businessProfileId': businessProfileId,
-        'topic': topic,
-        'slideCount': slideCount,
-      }),
+      body: jsonEncode(body),
     ).timeout(_kShortTimeout);
     _throwIfError(res);
-    return (jsonDecode(res.body) as Map<String, dynamic>)['projectId'] as String;
+    final decoded = jsonDecode(res.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw ApiException(200,
+          'Expected {"projectId": "..."} but got ${decoded.runtimeType}.');
+    }
+    final projectId = decoded['projectId'];
+    if (projectId is! String) {
+      throw ApiException(200,
+          'Response is missing the "projectId" field.');
+    }
+    return projectId;
   }
 
   Future<CreateVideoResult> createVideoProject({
@@ -640,29 +655,4 @@ class BusinessProfileJobSummary {
   factory BusinessProfileJobSummary.fromJson(Map<String, dynamic> json) {
     return BusinessProfileJobSummary(
       stage: json['stage'] as String,
-      provider: json['provider'] as String,
-      status: json['status'] as String,
-      error: json['error'] as String?,
-    );
-  }
-}
-
-class RazorpayOrder {
-  final String orderId;
-  final int amount; // in paise
-  final String currency;
-  final String keyId;
-  final String userId;
-  // v37: server echoes the resolved plan so callers can show the right
-  // post-purchase confirmation without re-resolving it.
-  final String? plan;
-
-  const RazorpayOrder({
-    required this.orderId,
-    required this.amount,
-    required this.currency,
-    required this.keyId,
-    required this.userId,
-    this.plan,
-  });
-}
+      provider: json['provider'] as Str

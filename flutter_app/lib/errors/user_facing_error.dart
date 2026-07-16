@@ -63,11 +63,39 @@ class UserFacingError {
     }
 
     // Fall-through: keep the raw message OUT of the user's face, but log
-    // it so future us can see the pattern.
+    // it so future us can see the pattern. Surface the exception type in
+    // the message so the user can report something more useful than
+    // "Something unexpected" if it keeps happening.
+    final typeName = _friendlyTypeName(error);
     return UserFacingError(
       title: "Couldn't ${_pastToInfinitive(operation)}",
-      message: 'Something unexpected happened. Try again in a moment.',
+      message: typeName == null
+          ? 'Something unexpected happened. Try again in a moment.'
+          : 'Something unexpected happened ($typeName). Try again in a moment.',
     );
+  }
+
+  /// Map common runtime exception types to user-readable names so the
+  /// fall-through message gives support a useful hint. Returns null for
+  /// types we deliberately don't surface (anything internal).
+  static String? _friendlyTypeName(Object error) {
+    final t = error.runtimeType.toString();
+    switch (t) {
+      case 'TypeError':
+        return 'response shape mismatch';
+      case 'RangeError':
+        return 'value out of range';
+      case 'StateError':
+        return 'unexpected state';
+      case 'NoSuchMethodError':
+        return 'missing handler';
+      case 'JsonUnsupportedObjectError':
+        return 'unserializable value';
+      case 'HandshakeException':
+        return 'TLS handshake failed';
+      default:
+        return null;
+    }
   }
 
   static UserFacingError _fromApi(ApiException e, String operation) {
@@ -134,33 +162,4 @@ class UserFacingError {
           title: 'Studio hiccup',
           message: "The studio is catching up. This usually clears in a few seconds.",
         );
-      default:
-        return UserFacingError(
-          title: "Couldn't ${_pastToInfinitive(operation)}",
-          message: backendMessage ?? 'Something unexpected happened. Try again in a moment.',
-        );
-    }
-  }
-
-  /// Extract a friendly error string from the backend's JSON body.
-  /// Backends returning `{"error": "..."}` are common; if the body is
-  /// something weirder we bail out and let the caller pick a generic
-  /// message.
-  static String? _extractBackendMessage(String body) {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map && decoded['error'] is String) {
-        final msg = decoded['error'] as String;
-        // Guard against backend leaking stack traces or internals.
-        if (msg.length < 200 && !msg.contains('at ')) return msg;
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  static String _pastToInfinitive(String operation) {
-    // "sign in" stays "sign in"; the caller already passes the base
-    // verb phrase. Trim any trailing punctuation just in case.
-    return operation.replaceAll(RegExp(r'[.!?]+$'), '');
-  }
-}
+      defaul
