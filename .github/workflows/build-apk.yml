@@ -57,9 +57,9 @@ jobs:
         run: |
           sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
 
-      - name: Build APK
+      - name: Build App bundle (AAB)
         working-directory: flutter_app
-        run: flutter build apk --release
+        run: flutter build appbundle --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
