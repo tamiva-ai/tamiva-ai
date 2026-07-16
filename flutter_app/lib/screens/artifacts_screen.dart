@@ -9,11 +9,15 @@ import '../widgets/hero_scaffold.dart';
 import '../widgets/logout_action.dart';
 import '../widgets/net_image.dart';
 
-/// "Artifacts" screen — four folders, one per generation type. Each
-/// folder shows all generated artifacts of that type, fetched via the
-/// existing /business-profiles/:id/projects/all endpoint.
+/// "Artifacts" screen — one folder per generation type. Each folder
+/// surfaces EVERY project the user has ever produced (any status),
+/// not just `ready` ones, so the user can see in-progress / failed
+/// generations and re-tap them. Folders with zero projects show a
+/// "Generate one" hint that routes back to the brand kit's matching
+/// tile.
 ///
-/// Tapping a folder opens its grid; tapping an artifact opens the
+/// Tapping a folder opens a 2-column grid of every project of that
+/// type, sorted most-recent first. Tapping an artifact opens the
 /// full-screen viewer with Download + Back.
 class ArtifactsScreen extends StatefulWidget {
   final ApiClient apiClient;
@@ -33,9 +37,6 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
   List<BusinessProfileProjectSummary> _logos = const [];
   List<BusinessProfileProjectSummary> _carousels = const [];
   List<BusinessProfileProjectSummary> _videos = const [];
-  // Website artifacts land in a future milestone; folder shows "Coming
-  // soon" until the generator ships.
-  static const List<BusinessProfileProjectSummary> _websites = [];
 
   bool _loading = true;
   UserFacingError? _error;
@@ -52,14 +53,9 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
       _error = null;
     });
     try {
-      // Fetch every project the user has ever produced (any status),
-      // then bucket by type. Endpoint: GET
-      // /business-profiles/:id/projects/all (already on ApiClient).
       final history = await widget.apiClient
           .getBusinessProfileHistory(widget.businessProfileId);
-      // Use the most-recent project of each type as the latest
-      // representative. The history endpoint already returns the most
-      // recent first per type (backend sorts desc by updatedAt).
+      // Backend sorts desc by updatedAt; one list per type.
       final logos = history.where((p) => p.type == 'logo').toList();
       final carousels = history.where((p) => p.type == 'carousel').toList();
       final videos = history.where((p) => p.type == 'video').toList();
@@ -134,17 +130,13 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
                         ),
                         const SizedBox(height: 12),
                         _FolderTile(
+                          // Website is locked Pro; if/when artifacts start
+                          // arriving we want them visible without an app
+                          // update, so we keep the wire-up.
                           title: 'Website',
-                          subtitle: 'Coming soon',
+                          subtitle: 'Coming soon — ships with the Pro plan.',
                           icon: Icons.language_outlined,
-                          onTap: () => ScaffoldMessenger.of(context)
-                              .showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Website artifacts ship in a future milestone.',
-                              ),
-                            ),
-                          ),
+                          onTap: _websitesComingSoon,
                         ),
                       ],
                     ),
@@ -154,33 +146,51 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
   }
 
   String _folderSubtitle(List<BusinessProfileProjectSummary> projects) {
+    if (projects.isEmpty) return 'No artifacts yet — tap to start one.';
     final ready =
         projects.where((p) => p.status == 'ready').length;
-    if (projects.isEmpty) return 'No artifacts yet';
-    if (ready == 0) return '${projects.length} in progress';
-    return '$ready ready · ${projects.length} total';
+    final failed =
+        projects.where((p) => p.status == 'failed').length;
+    final total = projects.length;
+    if (ready == 0 && failed > 0) {
+      return '$total saved · $failed failed — tap to retry';
+    }
+    if (ready == 0) {
+      return '$total in progress';
+    }
+    if (failed > 0) {
+      return '$ready ready · $total total · $failed failed';
+    }
+    return '$ready ready · $total total';
+  }
+
+  void _websitesComingSoon() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Website artifacts ship with the Pro plan generator.',
+        ),
+      ),
+    );
   }
 
   void _openFolder(
     String title,
     List<BusinessProfileProjectSummary> projects,
   ) {
-    final ready =
-        projects.where((p) => p.status == 'ready' && p.assetCount > 0).toList();
+    // Pass ALL projects (any status). The grid renders a status
+    // badge per tile so users can see in-progress / failed runs and
+    // re-tap ready ones to open the viewer.
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _ArtifactsGridScreen(
-          apiClient: widget.apiClient,
           title: title,
-          projects: ready,
+          projects: projects,
         ),
       ),
     );
   }
 }
-
-// (v37) the previous _ArtifactsBucket shim has been replaced by three
-// top-level List<BusinessProfileProjectSummary> fields on the State.
 
 class _FolderTile extends StatelessWidget {
   final String title;
@@ -245,12 +255,10 @@ class _FolderTile extends StatelessWidget {
 }
 
 class _ArtifactsGridScreen extends StatelessWidget {
-  final ApiClient apiClient;
   final String title;
   final List<BusinessProfileProjectSummary> projects;
 
   const _ArtifactsGridScreen({
-    required this.apiClient,
     required this.title,
     required this.projects,
   });
@@ -258,17 +266,42 @@ class _ArtifactsGridScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    // Empty-state copy depends on whether the user has ever generated
+    // anything in this category. Helps the user understand what's next.
+    final hasAnyProject = projects.isNotEmpty;
+
     return Scaffold(
       backgroundColor: TamivaColors.background,
-      appBar: AppBar(title: Text(title)),
-      body: projects.isEmpty
+      appBar: AppBar(
+        title: Text(title),
+        backgroundColor: TamivaColors.background,
+      ),
+      body: !hasAnyProject
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(32),
-                child: Text(
-                  'Nothing in this folder yet.',
-                  textAlign: TextAlign.center,
-                  style: textTheme.bodyMedium,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.folder_open_outlined,
+                      size: 56,
+                      color: TamivaColors.textFaint,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No ${title.toLowerCase()} in this folder yet.',
+                      textAlign: TextAlign.center,
+                      style: textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Tap the ${title.toLowerCase()} tile on the brand kit to start your first generation.',
+                      textAlign: TextAlign.center,
+                      style: textTheme.bodyMedium
+                          ?.copyWith(color: TamivaColors.textSecondary),
+                    ),
+                  ],
                 ),
               ),
             )
@@ -283,11 +316,7 @@ class _ArtifactsGridScreen extends StatelessWidget {
               ),
               itemCount: projects.length,
               itemBuilder: (_, i) {
-                final p = projects[i];
-                return _ArtifactTile(
-                  project: p,
-                  apiClient: apiClient,
-                );
+                return _ArtifactTile(project: projects[i]);
               },
             ),
     );
@@ -296,22 +325,21 @@ class _ArtifactsGridScreen extends StatelessWidget {
 
 class _ArtifactTile extends StatelessWidget {
   final BusinessProfileProjectSummary project;
-  final ApiClient apiClient;
 
-  const _ArtifactTile({
-    required this.project,
-    required this.apiClient,
-  });
+  const _ArtifactTile({required this.project});
 
   @override
   Widget build(BuildContext context) {
     final sample = project.firstAssetUrlSample;
+    final isReady = project.status == 'ready';
+    final isFailed = project.status == 'failed';
+    final inProgress = !isReady && !isFailed;
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(TamivaRadii.md),
       child: InkWell(
         borderRadius: BorderRadius.circular(TamivaRadii.md),
-        onTap: sample == null
+        onTap: (sample == null || !isReady)
             ? null
             : () => _openViewer(context, sample),
         child: Container(
@@ -325,14 +353,26 @@ class _ArtifactTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Expanded(
-                child: sample == null
-                    ? const Center(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (sample == null || !isReady)
+                      // Failed projects and in-progress projects have no
+                      // usable thumbnail. Show a status-specific icon
+                      // so the user knows what state this tile is in.
+                      Center(
                         child: Icon(
-                          Icons.broken_image,
-                          color: TamivaColors.textFaint,
+                          isFailed
+                              ? Icons.error_outline
+                              : Icons.hourglass_top_rounded,
+                          color: isFailed
+                              ? TamivaColors.error
+                              : TamivaColors.textFaint,
+                          size: 36,
                         ),
                       )
-                    : NetImage(
+                    else
+                      NetImage(
                         imageUrl: sample,
                         fit: BoxFit.cover,
                         placeholder: (_, __) => const Center(
@@ -345,6 +385,19 @@ class _ArtifactTile extends StatelessWidget {
                           ),
                         ),
                       ),
+                    if (inProgress || isFailed)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: _StatusBadge(
+                          label: isFailed ? 'Failed' : 'In progress',
+                          color: isFailed
+                              ? TamivaColors.error
+                              : TamivaColors.gold,
+                        ),
+                      ),
+                  ],
+                ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
@@ -393,6 +446,34 @@ class _ArtifactTile extends StatelessWidget {
         builder: (_) => _ArtifactViewerScreen(
           imageUrl: url,
           title: project.type.toUpperCase(),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _StatusBadge({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.7)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: color,
+          letterSpacing: 0.3,
         ),
       ),
     );

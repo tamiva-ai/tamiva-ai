@@ -4,6 +4,7 @@ import '../data/pricing_plans.dart';
 import '../services/api_client.dart';
 import '../services/payment_service.dart';
 import '../theme/tamiva_theme.dart';
+import '../widgets/glowing_feature_row.dart';
 import '../widgets/logout_action.dart';
 
 /// Three-plan pricing screen. Clean and minimal — no badges, no
@@ -167,7 +168,13 @@ class _PlanCard extends StatelessWidget {
           const Divider(height: 1),
           const SizedBox(height: 14),
           for (final feature in plan.features) ...[
-            _FeatureRow(text: feature),
+            // Highlight the "AI Website" line on the Business / Premium
+            // plans — it's the headline upgrade-reason and we want the
+            // eye to land there before the CTA.
+            if (_isWebsiteLine(feature))
+              GlowingFeatureRow(text: feature)
+            else
+              _FeatureRow(text: feature),
             const SizedBox(height: 8),
           ],
           const SizedBox(height: 6),
@@ -182,6 +189,14 @@ class _PlanCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Match the feature line that talks about the website. Both Business
+  /// (5-Page AI Website) and Premium (10-Page AI Website) plans should
+  /// glow. We match the case-insensitive substring "Website" so any
+  /// copy tweaks still light up the right row.
+  static bool _isWebsiteLine(String feature) {
+    return feature.toLowerCase().contains('website');
   }
 }
 

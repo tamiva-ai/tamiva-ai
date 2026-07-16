@@ -17,19 +17,12 @@ jobs:
 
       - name: Clean stale build artifacts
         working-directory: flutter_app
-        # A previously-committed .dart_tool/ or build/ cache can ship
-        # out-of-date kernel snapshots and stale Gradle state. Remove
-        # both so every build starts from a clean slate. .gitignore
-        # in this repo already excludes these directories.
         run: |
           rm -rf .dart_tool build
           rm -rf android/.gradle android/build android/app/build
 
       - name: Scaffold native Android project (only on first run)
         working-directory: flutter_app
-        # flutter create OVERWRITES lib/ if the project already has one.
-        # We now only run it when the native android shell is missing
-        # so committed source isn't destroyed.
         run: |
           if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
             flutter create . --platforms=android --org com.tamiva
