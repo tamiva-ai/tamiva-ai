@@ -19,9 +19,19 @@ jobs:
         with:
           flutter-version-file: .github/flutter-version
 
-      - name: Scaffold native Android project
+      - name: Scaffold native Android project (only on first run)
         working-directory: flutter_app
-        run: flutter create . --platforms=android --org com.tamiva
+        # flutter create OVERWRITES lib/ if the project already has one.
+        # This CI used to run on every push and silently destroyed the
+        # user's committed Flutter source. We now only run it when the
+        # native android shell is missing - first push, after a clean
+        # cache, or if android/ is intentionally removed.
+        run: |
+          if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
+            flutter create . --platforms=android --org com.tamiva
+          else
+            echo "android/app/src/main/AndroidManifest.xml already present - skipping flutter create to avoid overwriting lib/."
+          fi
 
       - name: Ensure INTERNET permission and browser queries
         working-directory: flutter_app
