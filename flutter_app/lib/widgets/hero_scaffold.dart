@@ -69,7 +69,8 @@ class HeroScaffold extends StatelessWidget {
 
 /// Shorter hero banner used at the top of content-heavy screens (business
 /// info, ambassador photos, brand assets) where most of the screen is a
-/// scrollable form or grid below the artclass HeroBannerScaffold extends StatelessWidget {
+/// scrollable form or grid below the art.
+class HeroBannerScaffold extends StatelessWidget {
   final String heroAsset;
   final String title;
   final Widget body;
