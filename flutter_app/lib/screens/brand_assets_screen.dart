@@ -18,6 +18,74 @@ import '../widgets/generation_status_board.dart';
 import 'artifacts_screen.dart';
 import 'pricing_screen.dart';
 
+/// v37.1: WhatsApp support number used by the Carousel and Film
+/// tile failure paths. Logo tile uses the same constant.
+const String kTamivaSupportWhatsApp = '8296792087';
+
+/// Opens WhatsApp (web or app) with the support chat pre-filled.
+/// Falls back silently if WhatsApp isn't installed - the user can
+/// dial the number manually.
+Future<void> openTamivaSupportWhatsApp(BuildContext context) async {
+  final digits = kTamivaSupportWhatsApp.replaceAll(RegExp(r'[^0-9]'), '');
+  final messenger = ScaffoldMessenger.of(context);
+  final uri = Uri.parse('https://wa.me/91' + digits);
+  final launched =
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!launched && context.mounted) {
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text(
+          "Couldn't open WhatsApp. Please message " + kTamivaSupportWhatsApp + " directly.",
+        ),
+      ),
+    );
+  }
+}
+
+/// Tappable WhatsApp icon pill. Used on every Carousel and Film
+/// failure tile so users have one consistent way to reach support
+/// regardless of whether retries are still available.
+class _TamivaWhatsAppButton extends StatelessWidget {
+  final String? label;
+  const _TamivaWhatsAppButton({this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF25D366),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => openTamivaSupportWhatsApp(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.chat_bubble_outline,
+                color: Colors.white,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              if (label != null)
+                Text(
+                  label!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Routes to the right full-screen viewer for a finished Project,
 /// based on its [Project.type]. When the project isn't ready or has no
 /// assets yet, surfaces a SnackBar with the reason rather than failing
@@ -159,6 +227,22 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   DateTime? _generationStartedAt;
   static const Duration kMaxGenerationDuration = Duration(minutes: 6);
 
+  // v37.1: independent retry counter for the Logo generation path.
+  // Bumps every time [_beginLogoGeneration] fires (both successful
+  // createLogoProject calls and immediate client-side failures
+  // count). Resets to 0 the moment a successful logo is delivered
+  // (lock-on-success). When [_logoAttempts] reaches
+  // [_logoMaxAttempts] without any successful logo, the Logo tile
+  // renders the support-only fallback permanently.
+  int _logoAttempts = 0;
+  static const int _logoMaxAttempts = 3;
+  bool get _logoLockedBehindSupport =>
+      !_logoReady &&
+      _project != null &&
+      _project!.isFailed &&
+      _logoAttempts >= _logoMaxAttempts;
+
+
   @override
   void initState() {
     super.initState();
@@ -232,12 +316,24 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
   /// or the error-screen retry). Guards against double-fire and wires
   /// the new project into this screen's own polling so the reveal
   /// triggers when the logo lands.
+  ///
+  /// v37.1: bumps [_logoAttempts] on every fire and refuses to fire
+  /// when [_logoLockedBehindSupport] is true. The cap is independent
+  /// per the spec ("each widget keeps its own retry count") and is
+  /// cleared automatically when a successful logo lands.
   Future<void> _beginLogoGeneration() async {
     if (_startingLogo) return;
+    if (_logoLockedBehindSupport) return;
     setState(() {
       _startingLogo = true;
       _error = null;
       _generationStartedAt = DateTime.now();
+      _logoAttempts += 1;
+      // Clear the previous failed project so the tile shows the
+      // in-flight spinner cleanly instead of briefly re-rendering
+      // the prior failure row.
+      _project = null;
+      _projectId = null;
     });
     try {
       final projectId = await widget.apiClient.createLogoProject(
@@ -265,7 +361,15 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     try {
       final project = await widget.apiClient.getProject(_projectId!);
       if (!mounted) return;
-      setState(() => _project = project);
+      // v37.1: a successful logo permanently locks that widget per
+      // the spec ("a successful generation locks that widget
+      // permanently"). Reset the retry counter so the tile stays
+      // open and the cap can never re-engage.
+      final succeeded = project.isReady && project.assets.isNotEmpty;
+      setState(() {
+        _project = project;
+        if (succeeded) _logoAttempts = 0;
+      });
       if (project.isReady || project.isFailed) {
         _pollTimer?.cancel();
       } else if (project.isInProgress && _generationStartedAt != null) {
@@ -552,6 +656,7 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     }
 
 
+
     if (!_logoReady && _projectId == null) {
       // v37: first-time user with no logo yet — show the full 4-tile
       // reveal so they see the entire studio at a glance, instead of
@@ -593,16 +698,50 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
           _BrandKitSection(
             title: 'Logo',
             hiddenCount: 0,
-            frontChild: _LogoPreview(project: _project),
+            frontChild: _logoLockedBehindSupport
+                ? const _LogoSupportLockTile()
+                : (_project != null && _project!.isFailed
+                    ? _LogoFailedTile(
+                        attemptsLeft: _logoMaxAttempts - _logoAttempts,
+                        onTap: _beginLogoGeneration,
+                      )
+                    : ((_project == null && _startingLogo)
+                        ? Container(
+                            color: TamivaColors.surface,
+                            child: const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    height: 24,
+                                    width: 24,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                  SizedBox(height: 10),
+                                  Text(
+                                    'Generating your logo…',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: TamivaColors.textSecondary,
+                                      ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : _LogoPreview(project: _project, starting: _startingLogo))),
             // v37: first-time user with no project yet can tap the
             // Logo tile to kick off generation. After the logo lands
             // we tap-to-open the viewer instead.
-            onFrontTap: _project == null
-                ? _beginLogoGeneration
-                : (_project!.isReady
-                    ? () => openProjectPreview(
-                        context, widget.apiClient, _project!)
-                    : null),
+            onFrontTap: _logoLockedBehindSupport
+                ? null
+                : (_project == null
+                    ? _beginLogoGeneration
+                    : (_project!.isReady
+                        ? () => openProjectPreview(
+                            context, widget.apiClient, _project!)
+                        : null)),
           ),
           const SizedBox(height: 28),
           _BrandKitSection(
@@ -678,10 +817,46 @@ class _BrandKitSection extends StatelessWidget {
 
 class _LogoPreview extends StatelessWidget {
   final Project? project;
-  const _LogoPreview({required this.project});
+
+  /// v37.1: when [starting] is true the backend hasn't returned the
+  /// new project yet, so [project] is still null. Render the spinner
+  /// instead of the "Tap to generate" CTA so the user sees one
+  /// continuous flow on retry rather than a flash of the idle state.
+  final bool starting;
+
+  const _LogoPreview({
+    required this.project,
+    this.starting = false,
+  });
 
   @override
   Widget build(BuildContext context) {
+    // In-flight retry: project is briefly null while a new request
+    // is in flight. Show the spinner so the user doesn't see the
+    // idle "Tap to generate" CTA flash for a frame.
+    if (project == null && starting) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(height: 10),
+              Text(
+                'Generating your logo…',
+                style: TextStyle(fontSize: 12, color: TamivaColors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     // First-time user with no logo yet — show the tap-to-generate CTA
     // inline so the brand kit reveal makes sense from the first screen.
     if (project == null) {
@@ -706,6 +881,111 @@ class _LogoPreview extends StatelessWidget {
         ),
       );
     }
+/// v37.1: shown when the Logo project failed but the user still has
+/// retries remaining. The WhatsApp pill is always visible - even
+/// while retries remain - because support is always useful.
+class _LogoFailedTile extends StatelessWidget {
+  final int attemptsLeft;
+
+  /// Tapping the row body retries. WhatsApp pill has its own onTap.
+  final VoidCallback onTap;
+
+  const _LogoFailedTile({
+    required this.attemptsLeft,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final remainingLabel = attemptsLeft > 0
+        ? 'Tap to retry · $attemptsLeft attempt${attemptsLeft == 1 ? '' : 's'} left'
+        : 'No retries left · contact support';
+    return Container(
+      color: TamivaColors.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            color: TamivaColors.error,
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: attemptsLeft > 0 ? onTap : null,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Logo generation failed',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    remainingLabel,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: TamivaColors.textSecondary,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const _TamivaWhatsAppButton(),
+        ],
+      ),
+    );
+  }
+}
+
+/// v37.1: shown after the user has burned through the logo retry
+/// cap with no success. Pure support-only fallback - tap-to-retry
+/// is disabled; the WhatsApp pill is the only remaining action.
+class _LogoSupportLockTile extends StatelessWidget {
+  const _LogoSupportLockTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: TamivaColors.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.support_agent_outlined,
+            color: TamivaColors.gold,
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'We couldn't generate this logo',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Tap WhatsApp to reach support. We'll start a fresh run once we hear back.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: TamivaColors.textSecondary,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const _TamivaWhatsAppButton(label: 'Support'),
+        ],
+      ),
+    );
+  }
+}
+
     if (project!.isInProgress) {
       return const ColoredBox(
         color: TamivaColors.surface,
@@ -813,14 +1093,101 @@ class _WebsiteLockedPreview extends StatelessWidget {
 /// If the asset isn't on disk (e.g. a developer machine before the
 /// asset is bundled), the widget degrades gracefully to a static
 /// placeholder — no pan, no crash.
-class _WebsiteRollingPreview extends StatefulWidget {
+/// v37.1: Website tile in the brand kit now renders a static `.gif`
+/// asset (`assets/hero/tamiva_website_preview.gif`) instead of the
+/// previous AnimatedBuilder-driven rolling preview. The gif is bundled
+/// via `pubspec.yaml` under `flutter.assets: assets/hero/`. Tapping the
+/// tile still routes to Pricing - there are no real Website artifacts
+/// to open yet, so the gif is the visual preview, not an openable
+/// artifact.
+class _WebsiteRollingPreview extends StatelessWidget {
   final VoidCallback onTap;
   const _WebsiteRollingPreview({required this.onTap});
 
-  @override
-  State<_WebsiteRollingPreview> createState() => _WebsiteRollingPreviewState();
-}
+  /// v37.1: height matches the other brand-kit tiles so the layout
+  /// doesn't reflow when the gif replaces the rolling preview.
+  static const double _tileHeight = 180;
 
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(TamivaRadii.md - 1),
+        child: SizedBox(
+          height: _tileHeight,
+          width: double.infinity,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                'assets/hero/tamiva_website_preview.gif',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) {
+                  return Container(
+                    color: TamivaColors.surface,
+                    alignment: Alignment.center,
+                    child: Text(
+                      'Tap to choose a plan',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: TamivaColors.gold,
+                          ),
+                    ),
+                  );
+                },
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  height: 56,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.55),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const Positioned(
+                left: 16,
+                right: 16,
+                bottom: 14,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.touch_app_outlined,
+                      color: TamivaColors.gold,
+                      size: 16,
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Coming soon',
+                        style: TextStyle(
+                          color: TamivaColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 class _WebsiteRollingPreviewState extends State<_WebsiteRollingPreview>
     with SingleTickerProviderStateMixin {
   static const String _assetPath = 'assets/hero/website_preview.png';
@@ -1125,6 +1492,11 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
   Project? _project;
   Timer? _pollTimer;
   bool _requestInFlight = false;
+  /// v37.1: wall-clock time the current generation started. Captured
+  /// at the same `setState` that flips `_requestInFlight = true` so
+  /// the `_GeneratingTile` can render an accurate elapsed counter
+  /// even on its first frame.
+  DateTime? _generationStartedAt;
   /// Number of user-visible attempts that have been started. Bumps on
   /// both start-call failures and poll-reported failures. Cleared on
   /// a successful ready state (because once the user has an artifact,
@@ -1274,13 +1646,42 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
       // Widget disposed mid-request. Don't touch state.
       return;
     }
-    setState(() => _requestInFlight = false);
     if (projectId == null) {
       // User cancelled OR the start call failed. Either way, nothing
       // to poll. The _attempts counter is already bumped.
+      // v37.1: drop _requestInFlight so the user can retry the
+      // tap. Wrap in setState so the build picks it up.
+      setState(() => _requestInFlight = false);
       return;
     }
-    _startPolling(projectId);
+    // v37.1: flicker fix. Before, _requestInFlight was flipped to
+    // false and then _startPolling set _project in a separate
+    // setState. Between the two, build() evaluated _isGenerating as
+    // false (because _project was still null) and rendered the
+    // "Tap to generate" placeholder, which produced a brief flash
+    // before the spinner. Setting _requestInFlight=false and
+    // _project=queued in the SAME setState keeps _isGenerating
+    // true throughout the transition.
+    //
+    // Promote projectId to a non-nullable local so the closure
+    // passed to Timer.periodic captures a String (Dart's flow
+    // analysis can't promote across the closure boundary).
+    final pid = projectId;
+    setState(() {
+      _requestInFlight = false;
+      _project = Project(
+        id: pid,
+        type: 'carousel',
+        status: 'queued',
+        assets: const [],
+      );
+    });
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _poll(pid),
+    );
+    _poll(pid);
   }
 
   void _startPolling(String projectId, {Project? seed}) {
@@ -1332,9 +1733,9 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
   Widget build(BuildContext context) {
     // Generate (in-flight request or queued / generating project).
     if (_isGenerating) {
-      return const _GeneratingTile(
-        label: 'Rendering your carousel…',
-        eta: Duration(seconds: 90),
+      return _GeneratingTile(
+        message: 'Your Social Carousel is getting generated…',
+        startedAt: _generationStartedAt ?? DateTime.now(),
       );
     }
     // Ready: show the artifact. The success flag is sticky; once set,
@@ -1357,7 +1758,10 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
       return GestureDetector(
         onTap: _onTap,
         behavior: HitTestBehavior.opaque,
-        child: _CarouselFailedTile(attemptsLeft: _maxAttempts - _attempts),
+        child: _CarouselFailedTile(
+          attemptsLeft: _maxAttempts - _attempts,
+          onTap: _onTap,
+        ),
       );
     }
     // No project yet — the "first tap creates the artifact" entry point.
@@ -1461,13 +1865,20 @@ class _CarouselFailedTile extends StatelessWidget {
   /// Number of generation attempts still available. Shown so the user
   /// knows how many taps remain before the tile locks.
   final int attemptsLeft;
-  const _CarouselFailedTile({required this.attemptsLeft});
+
+  /// Tapping the row body retries. WhatsApp pill has its own onTap.
+  final VoidCallback onTap;
+
+  const _CarouselFailedTile({
+    required this.attemptsLeft,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final remainingLabel = attemptsLeft > 0
         ? 'Tap to retry · $attemptsLeft attempt${attemptsLeft == 1 ? '' : 's'} left'
-        : 'Tap to retry';
+        : 'No retries left · contact support';
     return Container(
       color: TamivaColors.surface,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
@@ -1480,30 +1891,34 @@ class _CarouselFailedTile extends StatelessWidget {
           ),
           const SizedBox(width: 14),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'Carousel generation failed',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  remainingLabel,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: TamivaColors.textSecondary,
-                      ),
-                ),
-              ],
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: attemptsLeft > 0 ? onTap : null,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Carousel generation failed',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    remainingLabel,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: TamivaColors.textSecondary,
+                        ),
+                  ),
+                ],
+              ),
             ),
           ),
+          const _TamivaWhatsAppButton(),
         ],
       ),
     );
   }
 }
-
 /// v37: shown after the user has burned through the retry cap with
 /// no successful generation. Pure read-only — no tap handler — so
 /// further taps cannot re-enter the generation path.
@@ -1529,12 +1944,12 @@ class _CarouselSupportLockTile extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'We couldn\'t generate this carousel',
+                  'We couldn't generate this carousel',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Tap support in the app menu to get help. We\'ll start a fresh run once we hear back.',
+                  'Tap WhatsApp to reach support. We'll start a fresh run once we hear back.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: TamivaColors.textSecondary,
                       ),
@@ -1542,12 +1957,12 @@ class _CarouselSupportLockTile extends StatelessWidget {
               ],
             ),
           ),
+          const _TamivaWhatsAppButton(label: 'Support'),
         ],
       ),
     );
   }
 }
-
 class _CarouselReadyPreview extends StatelessWidget {
   final List<ProjectAsset> assets;
   final VoidCallback onTap;
@@ -1680,6 +2095,11 @@ class _FilmPreviewState extends State<_FilmPreview> {
   int _attempts = 0;
   static const int _maxAttempts = 3;
   bool _everSucceeded = false;
+  /// v37.1: wall-clock time the current generation started. Captured
+  /// at the same `setState` that flips `_requestInFlight = true` so
+  /// the `_GeneratingTile` can render an accurate elapsed counter
+  /// even on its first frame.
+  DateTime? _generationStartedAt;
 
   @override
   void initState() {
@@ -1745,9 +2165,35 @@ class _FilmPreviewState extends State<_FilmPreview> {
       // already bumped for the build() method to pick up.
     }
     if (!mounted) return;
-    setState(() => _requestInFlight = false);
-    if (projectId == null) return;
-    _startPolling(projectId);
+    if (projectId == null) {
+      // v37.1: drop _requestInFlight so the user can retry the tap.
+      setState(() => _requestInFlight = false);
+      return;
+    }
+    // v37.1: flicker fix (same rationale as carousel). Setting
+    // _requestInFlight=false and _project=queued in a single
+    // setState keeps _isGenerating true throughout the transition
+    // so the placeholder never re-appears between attempts.
+    //
+    // Promote projectId to a non-nullable local so the closure
+    // passed to Timer.periodic captures a String (Dart's flow
+    // analysis can't promote across the closure boundary).
+    final pid = projectId;
+    setState(() {
+      _requestInFlight = false;
+      _project = Project(
+        id: pid,
+        type: 'video',
+        status: 'queued',
+        assets: const [],
+      );
+    });
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _poll(pid),
+    );
+    _poll(pid);
   }
 
   void _startPolling(String projectId, {Project? seed}) {
@@ -1841,9 +2287,9 @@ class _FilmPreviewState extends State<_FilmPreview> {
   @override
   Widget build(BuildContext context) {
     if (_isGenerating) {
-      return const _GeneratingTile(
-        label: 'Shooting your brand film…',
-        eta: Duration(seconds: 60),
+      return _GeneratingTile(
+        message: 'Your 10-Second Brand Film is getting generated…',
+        startedAt: _generationStartedAt ?? DateTime.now(),
       );
     }
     if (_everSucceeded && _project != null && _project!.assets.isNotEmpty) {
@@ -1859,7 +2305,10 @@ class _FilmPreviewState extends State<_FilmPreview> {
       return GestureDetector(
         onTap: _onTap,
         behavior: HitTestBehavior.opaque,
-        child: _FilmFailedTile(attemptsLeft: _maxAttempts - _attempts),
+        child: _FilmFailedTile(
+          attemptsLeft: _maxAttempts - _attempts,
+          onTap: _onTap,
+        ),
       );
     }
     return GestureDetector(
@@ -1878,13 +2327,20 @@ class _FilmFailedTile extends StatelessWidget {
   /// Number of generation attempts still available. Shown so the user
   /// knows how many taps remain before the tile locks.
   final int attemptsLeft;
-  const _FilmFailedTile({required this.attemptsLeft});
+
+  /// Tapping the row body retries. WhatsApp pill has its own onTap.
+  final VoidCallback onTap;
+
+  const _FilmFailedTile({
+    required this.attemptsLeft,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final remainingLabel = attemptsLeft > 0
         ? 'Tap to retry · $attemptsLeft attempt${attemptsLeft == 1 ? '' : 's'} left'
-        : 'Tap to retry';
+        : 'No retries left · contact support';
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -1904,30 +2360,34 @@ class _FilmFailedTile extends StatelessWidget {
           ),
           const SizedBox(width: 14),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'Film generation failed',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  remainingLabel,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: TamivaColors.textSecondary,
-                      ),
-                ),
-              ],
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: attemptsLeft > 0 ? onTap : null,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Film generation failed',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    remainingLabel,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: TamivaColors.textSecondary,
+                        ),
+                  ),
+                ],
+              ),
             ),
           ),
+          const _TamivaWhatsAppButton(),
         ],
       ),
     );
   }
 }
-
 /// v37: shown after the user has burned through the retry cap with
 /// no successful generation. Read-only — no tap handler.
 class _FilmSupportLockTile extends StatelessWidget {
@@ -1959,12 +2419,12 @@ class _FilmSupportLockTile extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'We couldn\'t generate this film',
+                  'We couldn't generate this film',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Tap support in the app menu to get help. We\'ll start a fresh run once we hear back.',
+                  'Tap WhatsApp to reach support. We'll start a fresh run once we hear back.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: TamivaColors.textSecondary,
                       ),
@@ -1972,12 +2432,12 @@ class _FilmSupportLockTile extends StatelessWidget {
               ],
             ),
           ),
+          const _TamivaWhatsAppButton(label: 'Support'),
         ],
       ),
     );
   }
 }
-
 class _FilmPlaceholder extends StatelessWidget {
   const _FilmPlaceholder();
 
@@ -2119,39 +2579,86 @@ class _FilmReadyPreview extends StatelessWidget {
 
 // Reusable helpers - generating state, error tile, confirmation dialog.
 
-class _GeneratingTile extends StatelessWidget {
-  final String label;
-  final Duration eta;
-  const _GeneratingTile({required this.label, required this.eta});
+/// v37.1: shows a per-widget message plus an elapsed-time counter that
+/// ticks once per second. Replaces the prior small
+/// CircularProgressIndicator + ETA copy. The counter is computed from
+/// [startedAt] on every tick of a 1-second Timer.periodic, so it
+/// handles backgrounding correctly (Flutter pauses the event loop
+/// while the app is in the background; on resume the next tick
+/// recomputes the wall-clock delta, the user sees a single jump
+/// rather than a fast-forward animation). The Timer is cancelled in
+/// [dispose] so we don't leak.
+class _GeneratingTile extends StatefulWidget {
+  final String message;
+  final DateTime startedAt;
+
+  const _GeneratingTile({
+    required this.message,
+    required this.startedAt,
+  });
+
+  @override
+  State<_GeneratingTile> createState() => _GeneratingTileState();
+}
+
+class _GeneratingTileState extends State<_GeneratingTile> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _ticker = null;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final elapsed = DateTime.now().difference(widget.startedAt);
+    final totalSeconds = elapsed.inSeconds < 0 ? 0 : elapsed.inSeconds;
+    final mm = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final ss = (totalSeconds % 60).toString().padLeft(2, '0');
     return ColoredBox(
       color: TamivaColors.surface,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              height: 28,
-              width: 28,
-              child: CircularProgressIndicator(strokeWidth: 2),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 14),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              widget.message,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: TamivaColors.textPrimary,
+              ),
+              textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 10),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: TamivaColors.textSecondary),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '$mm:$ss',
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: TamivaColors.gold,
+              fontFeatures: [FontFeature.tabularFigures()],
             ),
-            const SizedBox(height: 4),
-            Text(
-              eta.inSeconds < 60
-                  ? '~${eta.inSeconds}s left'
-                  : '~${(eta.inSeconds / 60).round()} min left',
-              style: const TextStyle(fontSize: 10, color: TamivaColors.textFaint),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 14),
+        ],
       ),
     );
   }
