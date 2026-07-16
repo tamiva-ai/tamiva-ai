@@ -602,3 +602,82 @@ adminRouter.put("/users/:userId/tier", async (req, res) => {
     tierUpdatedAt: updated.tierUpdatedAt,
   });
 });
+
+/**
+ * v38: GET /admin/logs
+ *
+ * Lists recent ProviderCall log rows (every outbound OpenAI / Gemini
+ * HTTP exchange the worker did). Filters: projectId, operation,
+ * status (a specific HTTP status or "error" for any non-2xx), since
+ * (ISO timestamp). Limit defaults to 100, capped at 500.
+ *
+ * Each row carries the full request/response JSON so admins can debug
+ * generation failures from the dashboard. Image b64 payloads can be
+ * megabytes - the admin UI should truncate for display.
+ *
+ * Auth: same as every other /admin/* route.
+ */
+const listLogsSchema = z.object({
+  since: z.string().datetime().optional(),
+  projectId: z.string().uuid().optional(),
+  operation: z.string().min(1).max(120).optional(),
+  status: z
+    .union([z.coerce.number().int().min(100).max(599), z.literal("error")])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
+
+adminRouter.get("/logs", async (req, res) => {
+  const parsed = listLogsSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  const { since, projectId, operation, status, limit } = parsed.data;
+
+  // Build the status filter. "error" means status < 200 OR status >= 400
+  // OR status is null (network failure). We compose with prisma OR.
+  let statusFilter: { in?: number[]; notIn?: number[] } | undefined;
+  if (status === "error") {
+    statusFilter = { in: [400, 401, 402, 403, 404, 408, 409, 410, 412, 413, 414, 415, 416, 417, 421, 422, 423, 424, 425, 426, 428, 429, 431, 451, 500, 501, 502, 503, 504, 505, 506, 507, 508, 510, 511, 521, 522, 523, 525, 530, 532, 535, 541, 542, 543, 550, 551, 552, 553, 554, 555, 556, 557, 558, 559, 560] };
+    // Prisma's enum doesn't allow null in `in:`; we add the null case
+    // via OR below.
+  } else if (typeof status === "number") {
+    statusFilter = { in: [status] };
+  }
+
+  const where: {
+    createdAt?: { gte?: Date };
+    projectId?: string;
+    operation?: { contains: string };
+    OR?: unknown[];
+  } = {};
+  if (since) where.createdAt = { gte: new Date(since) };
+  if (projectId) where.projectId = projectId;
+  if (operation) where.operation = { contains: operation };
+
+  const rows = await prisma.providerCall.findMany({
+    where: {
+      ...where,
+      ...(statusFilter ? { OR: [statusFilter, { status: null }] } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+
+  res.json({
+    count: rows.length,
+    logs: rows.map((r) => ({
+      id: r.id,
+      operation: r.operation,
+      provider: r.provider,
+      projectId: r.projectId,
+      jobId: r.jobId,
+      status: r.status,
+      durationMs: r.durationMs,
+      errorKind: r.errorKind,
+      requestSummary: r.requestSummary,
+      responseSummary: r.responseSummary,
+      createdAt: r.createdAt.toISOString(),
+    })),
+  });
+});

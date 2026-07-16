@@ -214,3 +214,33 @@ model PasswordResetCode {
   @@index([email])
   @@index([expiresAt])
 }
+
+// ---------------------------------------------------------------------
+// v38: Provider call logs. Captures every outbound HTTP exchange with
+// OpenAI / Gemini (and any future provider) for admin debugging at
+// https://api.tamiva.in/admin/logs. 3-day retention; pruned by the
+// worker on boot and every 6h.
+//
+// `requestSummary` carries the input (prompt, refs, params).
+// `responseSummary` carries the output (asset URLs, status, body).
+// Image b64 is captured - we want live debugging fidelity - but the
+// admin UI renders a truncated preview with a "Show full" toggle.
+// ---------------------------------------------------------------------
+model ProviderCall {
+  id              String   @id @default(uuid())
+  operation       String   // e.g. "openai.generateImage", "openai.downloadRaw", "gemini.generateVideo", "gemini.pollVideoOperation"
+  provider        String   // "openai" | "gemini"
+  projectId       String?
+  jobId           String?
+  status          Int?     // HTTP status. null = network/exception.
+  durationMs      Int
+  errorKind       String?  // "timeout" | "rate_limit" | "bad_status" | "decode" | "network" | null
+  requestSummary  Json     // captured input
+  responseSummary Json?    // captured output (null on failure)
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([projectId])
+  @@index([operation])
+  @@index([status])
+}

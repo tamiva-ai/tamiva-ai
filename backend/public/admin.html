@@ -342,6 +342,7 @@ function renderDashboard(stats, customers) {
     + '  <h1>Tamiva · Admin</h1>'
     + '  <div class="row-actions">'
     + '    <input id="search" class="input" placeholder="Search by name, email, or phone..." />'
+    + '    <a class="button ghost" id="logs-link" href="#logs" style="text-decoration: none;">Provider logs</a>'
     + '    <button class="button ghost" id="logout">Sign out</button>'
     + '  </div>'
     + '</div>'
@@ -595,3 +596,219 @@ bootstrap();
 
 </body>
 </html>
+
+<script>
+// ============================================================================
+// v38: Provider-call logs view
+//
+// Renders every ProviderCall row from the DB - the outbound HTTP exchanges
+// the worker had with OpenAI / Gemini. Each row shows the operation,
+// projectId, status, duration, and error kind. Clicking a row opens a
+// side panel with the full requestSummary and responseSummary JSON so
+// admins can debug "why did this image / video fail?" without sshing
+// into the box.
+//
+// Filters: projectId, operation substring, status (specific code or
+// "error"). Auto-refresh every 5 seconds.
+// ============================================================================
+
+var logsState = {
+  filterProjectId: '',
+  filterOperation: '',
+  filterStatus: '',
+  selected: null,
+  timer: null,
+};
+
+function fmtBytes(n) {
+  if (n == null) return "-";
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+  return (n / (1024 * 1024)).toFixed(2) + " MB";
+}
+
+function summariseJsonSize(obj) {
+  try {
+    var s = JSON.stringify(obj);
+    return fmtBytes(s ? s.length : 0);
+  } catch (_) { return "?"; }
+}
+
+function statusPillForLog(s, kind) {
+  var label, cls;
+  if (s == null) { label = "ERR"; cls = "failed"; }
+  else if (s >= 200 && s < 300) { label = String(s); cls = "ready"; }
+  else if (s >= 400 && s < 500) { label = String(s); cls = "failed"; }
+  else if (s >= 500 && s < 600) { label = String(s); cls = "failed"; }
+  else { label = String(s); cls = "queued"; }
+  if (kind) label += " · " + kind;
+  return '<span class="pill ' + cls + '">' + escapeHtml(label) + '</span>';
+}
+
+function rowHtml(log) {
+  return ''
+    + '<tr class="clickable" data-log-id="' + escapeHtml(log.id) + '">'
+    + '  <td><code style="font-size: 11px;">' + escapeHtml(log.id.slice(0, 8)) + '</code></td>'
+    + '  <td>' + escapeHtml(log.operation) + '</td>'
+    + '  <td>' + statusPillForLog(log.status, log.errorKind) + '</td>'
+    + '  <td class="num">' + log.durationMs + ' ms</td>'
+    + '  <td><code style="font-size: 11px;">' + escapeHtml(log.projectId ? log.projectId.slice(0, 8) : "-") + '</code></td>'
+    + '  <td style="color: var(--text-faint); white-space: nowrap;">' + fmtRel(log.createdAt) + '</td>'
+    + '</tr>';
+}
+
+function renderLogs() {
+  if (logsState.timer) clearInterval(logsState.timer);
+
+  root.innerHTML = ''
+    + '<div class="header-row">'
+    + '  <h1>Provider call logs</h1>'
+    + '  <div class="row-actions">'
+    + '    <button class="button ghost" id="back-to-overview">← Overview</button>'
+    + '    <button class="button ghost" id="refresh-logs">Refresh</button>'
+    + '    <button class="button ghost" id="logout">Sign out</button>'
+    + '  </div>'
+    + '</div>'
+    + '<h3>Filters</h3>'
+    + '<div class="card">'
+    + '  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 12px; align-items: end;">'
+    + '    <div><label class="label">Project ID</label><input id="f-project" class="input" placeholder="full UUID" /></div>'
+    + '    <div><label class="label">Operation contains</label><input id="f-operation" class="input" placeholder="e.g. generateImage" /></div>'
+    + '    <div><label class="label">Status</label>'
+    + '      <select id="f-status" class="input">'
+    + '        <option value="">all</option>'
+    + '        <option value="error">error (any non-2xx)</option>'
+    + '        <option value="400">400</option><option value="401">401</option><option value="403">403</option>'
+    + '        <option value="408">408</option><option value="429">429</option>'
+    + '        <option value="500">500</option><option value="502">502</option><option value="503">503</option>'
+    + '      </select>'
+    + '    </div>'
+    + '    <div><button class="button" id="apply-filters">Apply</button></div>'
+    + '  </div>'
+    + '</div>'
+    + '<h3>Recent calls <span style="color: var(--text-faint); font-weight: 400; font-size: 12px; text-transform: none; letter-spacing: 0;">auto-refreshes every 5s</span></h3>'
+    + '<div class="card" style="padding: 0; position: relative;">'
+    + '  <table>'
+    + '    <thead><tr><th>id</th><th>operation</th><th>status</th><th class="num">duration</th><th>project</th><th>when</th></tr></thead>'
+    + '    <tbody id="logs-tbody"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>'
+    + '  </table>'
+    + '</div>';
+
+  $("#back-to-overview").addEventListener("click", function() {
+    if (logsState.timer) clearInterval(logsState.timer);
+    location.hash = "";
+  });
+  $("#logout").addEventListener("click", function() { if (confirm("Sign out and clear admin key?")) clearKey(); });
+
+  // Restore filter inputs from state
+  $("#f-project").value = logsState.filterProjectId;
+  $("#f-operation").value = logsState.filterOperation;
+  $("#f-status").value = logsState.filterStatus;
+
+  function refresh() {
+    var qs = [];
+    if (logsState.filterProjectId) qs.push("projectId=" + encodeURIComponent(logsState.filterProjectId));
+    if (logsState.filterOperation) qs.push("operation=" + encodeURIComponent(logsState.filterOperation));
+    if (logsState.filterStatus) qs.push("status=" + encodeURIComponent(logsState.filterStatus));
+    qs.push("limit=200");
+
+    api("/admin/logs?" + qs.join("&")).then(function(resp) {
+      var tbody = $("#logs-tbody");
+      if (resp.logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No log rows match.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = resp.logs.map(rowHtml).join("");
+      // Wire row clicks
+      Array.prototype.forEach.call(tbody.querySelectorAll("tr.clickable"), function(tr) {
+        tr.addEventListener("click", function() {
+          var id = tr.dataset.logId;
+          var row = resp.logs.find(function(r) { return r.id === id; });
+          if (row) showLogDetail(row);
+        });
+      });
+    }).catch(function(err) {
+      $("#logs-tbody").innerHTML = '<tr><td colspan="6" class="err">' + escapeHtml(err.message) + '</td></tr>';
+    });
+  }
+  refresh();
+  logsState.timer = setInterval(refresh, 5000);
+
+  $("#apply-filters").addEventListener("click", function() {
+    logsState.filterProjectId = $("#f-project").value.trim();
+    logsState.filterOperation = $("#f-operation").value.trim();
+    logsState.filterStatus = $("#f-status").value.trim();
+    refresh();
+  });
+  $("#refresh-logs").addEventListener("click", refresh);
+
+  // Detail modal
+  showLogDetail(logsState.selected);
+}
+
+function showLogDetail(row) {
+  logsState.selected = row;
+  // Remove any existing modal
+  var existing = document.getElementById("log-detail-modal");
+  if (existing) existing.remove();
+  if (!row) return;
+
+  var modal = document.createElement("div");
+  modal.id = "log-detail-modal";
+  modal.style.cssText = ''
+    + 'position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100;'
+    + 'display: flex; align-items: stretch; justify-content: flex-end;';
+  var panel = document.createElement("div");
+  panel.style.cssText = ''
+    + 'width: min(900px, 95vw); background: var(--bg); color: var(--text);'
+    + 'border-left: 1px solid var(--gold); padding: 24px; overflow: auto;';
+
+  var fullReq = row.requestSummary;
+  var fullRes = row.responseSummary;
+  var reqJson = (() => { try { return JSON.stringify(fullReq, null, 2); } catch (_) { return String(fullReq); } })();
+  var resJson = (() => { try { return JSON.stringify(fullRes, null, 2); } catch (_) { return String(fullRes); } })();
+  var reqBytes = summariseJsonSize(fullReq);
+  var resBytes = summariseJsonSize(fullRes);
+
+  panel.innerHTML = ''
+    + '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">'
+    + '  <h2 style="margin: 0;">Call detail</h2>'
+    + '  <button class="button ghost" id="close-detail">Close</button>'
+    + '</div>'
+    + '<div class="meta-block" style="margin-bottom: 16px;">'
+    + '  <div><strong>id:</strong> <code>' + escapeHtml(row.id) + '</code></div>'
+    + '  <div><strong>operation:</strong> ' + escapeHtml(row.operation) + '</div>'
+    + '  <div><strong>provider:</strong> ' + escapeHtml(row.provider) + '</div>'
+    + '  <div><strong>projectId:</strong> <code>' + escapeHtml(row.projectId || "—") + '</code></div>'
+    + '  <div><strong>jobId:</strong> <code>' + escapeHtml(row.jobId || "—") + '</code></div>'
+    + '  <div><strong>status:</strong> ' + statusPillForLog(row.status, row.errorKind) + '</div>'
+    + '  <div><strong>durationMs:</strong> ' + row.durationMs + '</div>'
+    + '  <div><strong>createdAt:</strong> ' + escapeHtml(row.createdAt) + '</div>'
+    + '</div>'
+    + '<h3>Request <span style="color: var(--text-faint); font-weight: 400; font-size: 12px; text-transform: none; letter-spacing: 0;">(' + reqBytes + ')</span></h3>'
+    + '<pre style="background: var(--surface); border: 1px solid var(--divider); padding: 12px; border-radius: 8px; overflow: auto; font-size: 12px; max-height: 40vh;">' + escapeHtml(reqJson) + '</pre>'
+    + '<h3>Response <span style="color: var(--text-faint); font-weight: 400; font-size: 12px; text-transform: none; letter-spacing: 0;">(' + resBytes + ')</span></h3>'
+    + '<pre style="background: var(--surface); border: 1px solid var(--divider); padding: 12px; border-radius: 8px; overflow: auto; font-size: 12px; max-height: 40vh;">' + escapeHtml(resJson) + '</pre>'
+    + '<div style="margin-top: 16px; color: var(--text-faint); font-size: 12px;">Tip: prompt/image b64 can be megabytes - the values above are the raw captured payloads (truncated to ~10k chars by the JSON.stringify call).</div>';
+
+  modal.appendChild(panel);
+  document.body.appendChild(modal);
+  panel.querySelector("#close-detail").addEventListener("click", function() {
+    modal.remove();
+    logsState.selected = null;
+  });
+  modal.addEventListener("click", function(e) { if (e.target === modal) { modal.remove(); logsState.selected = null; } });
+}
+
+// Hook the new tab into bootstrap via hash routing.
+// Add "logs" tab: location.hash = "#logs" renders the logs view.
+(function patchBootstrap() {
+  var orig = window.bootstrap;
+  window.bootstrap = function() {
+    if (location.hash === "#logs") {
+      return renderLogs();
+    }
+    return orig.apply(this, arguments);
+  };
+})();
+</script>

@@ -4,6 +4,7 @@ import { connection, LogoJobData, CarouselJobData, VideoJobData } from "./index.
 import { generateImage, generateCarouselSlides } from "../providers/openaiImage.js";
 import { generateVideo, pollVideoOperation } from "../providers/geminiVideo.js";
 import { prisma } from "../db/client.js";
+import { pruneOldProviderCalls } from "../util/providerLog.js";
 
 /**
  * Timestamped log lines so a long generation is easy to read in the
@@ -44,10 +45,13 @@ async function processLogo(job: Job<LogoJobData>) {
     data: { status: "generating" },
   });
 
+  const jobId = job.id;
   const result = await generateImage({
     prompt,
     referenceImageUrls,
     n: 1,
+    projectId,
+    jobId: String(jobId),
   });
 
   await prisma.asset.createMany({
@@ -87,7 +91,8 @@ async function processCarousel(job: Job<CarouselJobData>) {
   const refList = (slideReferenceImageUrls ?? []).slice();
   while (refList.length < slidePrompts.length) refList.push([]);
 
-  const urls = await generateCarouselSlides(slidePrompts, refList);
+  const jobId = job.id;
+  const urls = await generateCarouselSlides(slidePrompts, refList, { projectId, jobId: String(jobId) });
 
   await prisma.asset.createMany({
     data: urls.map((url, index) => ({
@@ -122,24 +127,26 @@ async function processVideoStage(job: Job<VideoJobData>) {
     data: { status: "generating" },
   });
 
-  const { operationId } = await generateVideo({
-    prompt,
-    referenceImageUrls,
-    tier,
-    firstFrameUrl,
-  });
+  const jobId = job.id;
+    const { operationId } = await generateVideo({
+      prompt,
+      referenceImageUrls: refs.ambassadorUrl ? [refs.ambassadorUrl] : [],
+      tier: parsed.data.tier,
+      projectId,
+      jobId: String(jobId),
+    });
   log("video", `submitted projectId=${projectId} operationId=${operationId}`);
 
   // Simple inline poll loop. In production this should be a separate
   // delayed requeue so the worker thread isn't held for the full video
   // render (~30-90s).
-  let status = await pollVideoOperation(operationId);
+  let status = await pollVideoOperation(operationId, projectId, String(jobId));
   let attempts = 0;
   const MAX_POLL_ATTEMPTS = 240; // ~20 minutes at 5s intervals
   while (!status.done && attempts < MAX_POLL_ATTEMPTS) {
     await new Promise((r) => setTimeout(r, 5000));
     attempts++;
-    status = await pollVideoOperation(operationId);
+    status = await pollVideoOperation(operationId, projectId, String(jobId));
     // Heartbeat every 6 polls (30s) so an idle worker doesn't look frozen
     // in the logs without spamming them on every single tick.
     if (attempts % 6 === 0) {
@@ -211,5 +218,18 @@ worker.on("failed", async (job, err) => {
     console.error("Failed to mark project as failed:", e);
   }
 });
+// v38: Background maintenance for provider-call logs. Prune the
+// ProviderCall table on boot and every 6 hours to keep the 3-day
+// retention promise. Idempotent; failure is logged but doesn't kill
+// the worker.
+async function runMaintenance() {
+  try {
+    const pruned = await pruneOldProviderCalls();
+    if (pruned > 0) console.log(`[maintenance] pruned ${pruned} old provider call log(s)`);
+  } catch (err) {
+    console.error("[maintenance] pruneOldProviderCalls failed:", err);
+  }
+}
 
-console.log("Worker started, listening on 'generation' queue");
+void runMaintenance();
+setInterval(runMaintenance, 6 * 60 * 60 * 1000).unref();
