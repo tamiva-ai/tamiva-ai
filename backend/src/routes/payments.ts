@@ -32,7 +32,7 @@ const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
 // Each plan maps to a paid tier (launch / pro / premium). Adding a new
 // plan is a one-line entry here + matching string in the Flutter client.
 const PLAN_AMOUNTS_PAISE: Record<Exclude<TierName, "free">, number> = {
-  launch: 900, // ₹9 (introductory launch price)
+  launch: 199900, // ₹1,999
   pro: 599900, // ₹5,999 (was ₹5,000 before three-tier launch)
   premium: 999900, // ₹9,999
 };
@@ -404,4 +404,5 @@ paymentsRouter.post("/webhook", async (req: Request, res: Response) => {
     }),
   ]);
 
-  return res.jso
+  return res.json({ ok: true });
+});

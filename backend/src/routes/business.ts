@@ -98,69 +98,6 @@ businessRouter.get("/:id/projects", async (req, res) => {
 });
 
 /**
- * GET /business-profiles/:id/projects/all
- *
- * Returns the full history of every Project ever produced for this
- * business profile, one entry per project (most recent first). Used by
- * the Flutter "Artifacts" screen to render four folders (one per
- * generation type) and let the user re-open any past artifact.
- *
- * The shape mirrors the Flutter BusinessProfileProjectSummary class
- * (flutter_app/lib/services/api_client.dart). Fields:
- *   id, type, status, createdAt, updatedAt,
- *   assetCount, firstAssetUrlSample, durationSeconds, jobs[]
- *
- * `firstAssetUrlSample` is the URL of the first asset (sorted by
- * createdAt then id for determinism). It's null if the project has no
- * assets yet — useful for in-progress/failed projects where we still
- * want to render the row but show a "broken image" placeholder.
- */
-businessRouter.get("/:id/projects/all", async (req, res) => {
-  const profile = await prisma.businessProfile.findUnique({
-    where: { id: req.params.id },
-    select: { id: true },
-  });
-  if (!profile) return res.status(404).json({ error: "Business profile not found" });
-
-  const projects = await prisma.project.findMany({
-    where: { businessProfileId: req.params.id },
-    include: {
-      assets: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
-      jobs: { orderBy: { createdAt: "asc" } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  res.json({
-    projects: projects.map((p) => {
-      const firstAsset = p.assets[0] ?? null;
-      return {
-        id: p.id,
-        type: p.type,
-        status: p.status,
-        createdAt: p.createdAt.toISOString(),
-        updatedAt: p.updatedAt.toISOString(),
-        assetCount: p.assets.length,
-        firstAssetUrlSample: firstAsset ? firstAsset.url : null,
-        // Wall-clock duration the project spent in flight. Matches the
-        // shape returned by /admin/projects so the client can render
-        // both endpoints interchangeably.
-        durationSeconds: Math.max(
-          0,
-          Math.floor((p.updatedAt.getTime() - p.createdAt.getTime()) / 1000),
-        ),
-        jobs: p.jobs.map((j) => ({
-          stage: j.stage,
-          provider: j.provider,
-          status: j.status,
-          error: j.error ?? null,
-        })),
-      };
-    }),
-  });
-});
-
-/**
  * GET /business-profiles/by-user/:userId
  *
  * Returns the user's primary business profile. 404 if none exists.
@@ -213,4 +150,82 @@ businessRouter.put("/by-user/:userId", async (req, res) => {
     return res.status(403).json({
       error: "Editing your business info requires a paid plan. Tap Upgrade to choose one.",
     });
- 
+  }
+
+  const existing = await prisma.businessProfile.findFirst({
+    where: { userId: req.params.userId },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!existing) return res.status(404).json({ error: "No existing profile" });
+
+  const updated = await prisma.businessProfile.update({
+    where: { id: existing.id },
+    data: {
+      name: parsed.data.name,
+      industry: parsed.data.industry,
+      tagline: parsed.data.tagline ?? null,
+      tone: parsed.data.tone ?? null,
+      palettePreference: parsed.data.palettePreference ?? null,
+      fontPreference: parsed.data.fontPreference ?? null,
+    },
+  });
+
+  if (parsed.data.photoUrls !== undefined) {
+    const existingAmb = await prisma.brandAmbassador.findMany({
+      where: { businessProfileId: existing.id },
+    });
+
+    if (parsed.data.photoUrls.length > 0) {
+      if (existingAmb.length > 0) {
+        await prisma.brandAmbassador.update({
+          where: { id: existingAmb[0].id },
+          data: {
+            photoUrls: parsed.data.photoUrls,
+            angleLabels: parsed.data.angleLabels ?? [],
+          },
+        });
+      } else {
+        await prisma.brandAmbassador.create({
+          data: {
+            businessProfileId: existing.id,
+            photoUrls: parsed.data.photoUrls,
+            angleLabels: parsed.data.angleLabels ?? [],
+          },
+        });
+      }
+    } else {
+      for (const a of existingAmb) {
+        await prisma.brandAmbassador.delete({ where: { id: a.id } });
+      }
+    }
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { tier: "free", tierUpdatedAt: new Date() },
+  });
+
+  res.status(200).json({ profile: updated });
+});
+
+const addAmbassadorSchema = z.object({
+  photoUrls: z.array(z.string().url()).min(1),
+  angleLabels: z.array(z.string()).optional(),
+});
+
+businessRouter.post("/:id/ambassadors", async (req, res) => {
+  const parsed = addAmbassadorSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const ambassador = await prisma.brandAmbassador.create({
+      data: {
+      businessProfileId: req.params.id,
+      photoUrls: parsed.data.photoUrls,
+      angleLabels: parsed.data.angleLabels ?? [],
+    },
+  });
+
+  res.status(201).json(ambassador);
+});
