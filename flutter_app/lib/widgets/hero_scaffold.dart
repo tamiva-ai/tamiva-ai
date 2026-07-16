@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../theme/tamiva_theme.dart';
 
 /// Full-bleed hero background with a scrim for legibility, used on the
@@ -68,8 +69,7 @@ class HeroScaffold extends StatelessWidget {
 
 /// Shorter hero banner used at the top of content-heavy screens (business
 /// info, ambassador photos, brand assets) where most of the screen is a
-/// scrollable form or grid below the art.
-class HeroBannerScaffold extends StatelessWidget {
+/// scrollable form or grid below the artclass HeroBannerScaffold extends StatelessWidget {
   final String heroAsset;
   final String title;
   final Widget body;
@@ -105,7 +105,7 @@ class HeroBannerScaffold extends StatelessWidget {
         }
         final popped = await navigator.maybePop();
         if (!popped) {
-          // No more routes — close the app to launcher.
+          // No more routes · close the app to launcher.
           // ignore: deprecated_member_use
           await SystemNavigator.pop();
         }
@@ -119,9 +119,8 @@ class HeroBannerScaffold extends StatelessWidget {
               pinned: true,
               backgroundColor: TamivaColors.background,
               surfaceTintColor: Colors.transparent,
-              // Back arrow is now always shown (no toggle). PopScope
-              // above handles whether tapping it pops a route or
-              // closes the app.
+              // Back arrow is now always shown. PopScope above handles
+              // whether tapping it pops a route or closes the app.
               actions: actions,
               flexibleSpace: FlexibleSpaceBar(
                 centerTitle: true,
@@ -170,6 +169,8 @@ class HeroBannerScaffold extends StatelessWidget {
     );
   }
 }
+
+
 
 class _FallbackGradient extends StatelessWidget {
   const _FallbackGradient();
