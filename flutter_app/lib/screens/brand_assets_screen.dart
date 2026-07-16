@@ -644,7 +644,7 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
                       )
                     : ((_project == null && _startingLogo)
                         ? _GeneratingTile(
-                            message: 'Your Logo is getting generated\xe2\x80\xa6',
+                            message: 'Your Logo is getting generated…',
                             startedAt: _generationStartedAt ?? DateTime.now(),
                           )
                         : _LogoPreview(
@@ -2885,4 +2885,3 @@ Color _hexToColor(String hex) {
   final v = int.tryParse('FF$cleaned', radix: 16);
   return v == null ? TamivaColors.textFaint : Color(v);
 }
-                                                                  
