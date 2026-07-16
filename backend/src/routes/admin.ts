@@ -654,11 +654,17 @@ adminRouter.get("/logs", async (req, res) => {
   if (projectId) where.projectId = projectId;
   if (operation) where.operation = { contains: operation };
 
+  // Compose the where-clause. When statusFilter is non-null we OR
+  // "match this status code set" with "OR status is null (network
+  // failure)" - Prisma expects every element of OR to be a fully-
+  // typed ProviderCallWhereInput, so we cast the array explicitly.
+  // This avoids the structural-typing trap where neither bare object
+  // is a valid ProviderCallWhereInput on its own.
+  const whereWithStatus: Prisma.ProviderCallWhereInput = statusFilter
+    ? { OR: [statusFilter, { status: null }] as Prisma.ProviderCallWhereInput[] }
+    : where;
   const rows = await prisma.providerCall.findMany({
-    where: {
-      ...where,
-      ...(statusFilter ? { OR: [statusFilter, { status: null }] } : {}),
-    },
+    where: whereWithStatus,
     orderBy: { createdAt: "desc" },
     take: limit,
   });
