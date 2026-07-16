@@ -881,46 +881,6 @@ class _LogoPreview extends StatelessWidget {
         ),
       );
     }
-
-    if (project!.isInProgress) {
-      return const ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                height: 24,
-                width: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              SizedBox(height: 10),
-              Text('Generating your logo…',
-                  style: TextStyle(fontSize: 12, color: TamivaColors.textSecondary)),
-            ],
-          ),
-        ),
-      );
-    }
-    if (project!.isFailed || project!.assets.isEmpty) {
-      return const ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(
-          child: Icon(Icons.auto_awesome, size: 32, color: TamivaColors.textFaint),
-        ),
-      );
-    }
-    return NetImage(
-      imageUrl: project!.assets.first.url,
-      fit: BoxFit.cover,
-      placeholder: (_, __) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-      errorWidget: (_, __, ___) =>
-          const Icon(Icons.broken_image, color: TamivaColors.textFaint),
-    );
-  }
-}
-
 /// v37.1: shown when the Logo project failed but the user still has
 /// retries remaining. The WhatsApp pill is always visible - even
 /// while retries remain - because support is always useful.
@@ -1026,6 +986,44 @@ class _LogoSupportLockTile extends StatelessWidget {
   }
 }
 
+    if (project!.isInProgress) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(height: 10),
+              Text('Generating your logo…',
+                  style: TextStyle(fontSize: 12, color: TamivaColors.textSecondary)),
+            ],
+          ),
+        ),
+      );
+    }
+    if (project!.isFailed || project!.assets.isEmpty) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Icon(Icons.auto_awesome, size: 32, color: TamivaColors.textFaint),
+        ),
+      );
+    }
+    return NetImage(
+      imageUrl: project!.assets.first.url,
+      fit: BoxFit.cover,
+      placeholder: (_, __) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      errorWidget: (_, __, ___) =>
+          const Icon(Icons.broken_image, color: TamivaColors.textFaint),
+    );
+  }
+}
 
 /// v37: Locked placeholder shown in the Website _BrandKitSection.
 /// Tapping anywhere on it opens the Pricing screen.
@@ -1190,6 +1188,8 @@ class _WebsiteRollingPreview extends StatelessWidget {
     );
   }
 }
+
+
 // CAROUSEL - tappable, generates 5 slides on first tap.
 
 // Top-level helpers callable from any context (the status board, the
