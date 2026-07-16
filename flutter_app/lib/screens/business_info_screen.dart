@@ -713,8 +713,8 @@ class _TonePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _ChipPickerCard(
-      label: 'BRAND TONE (Pick 1)',
-      emptyHint: 'Tap to pick one tone',
+      label: 'BRAND TONE (MAX 2)',
+      emptyHint: 'Tap to pick one or two tones',
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,
