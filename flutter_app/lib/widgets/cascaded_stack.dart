@@ -15,6 +15,12 @@ class CascadedStack extends StatelessWidget {
   final VoidCallback? onFrontTap;
   final VoidCallback? onLockedTap;
 
+  /// Toggle the gold "Free" pill in the top-left of the front card.
+  /// Defaults to true (every tile shows it). Set to false on tiles
+  /// whose content is fully Pro-locked (e.g. the Website tile) where
+  /// the "Free" pill would be misleading.
+  final bool showFreePill;
+
   const CascadedStack({
     super.key,
     required this.frontChild,
@@ -22,6 +28,7 @@ class CascadedStack extends StatelessWidget {
     this.height = 180,
     this.onFrontTap,
     this.onLockedTap,
+    this.showFreePill = true,
   });
 
   @override
@@ -85,16 +92,18 @@ class CascadedStack extends StatelessWidget {
                             child: frontChild,
                           ),
                         ),
-                        // "1 free" pill (top-left)
-                        Positioned(
-                          left: 10,
-                          top: 10,
-                          child: _Pill(
-                            label: 'Free',
-                            background: TamivaColors.gold,
-                            foreground: const Color(0xFF1A0F02),
+                        // "Free" pill (top-left) — hidden on fully
+                        // Pro-locked tiles (e.g. the Website tile).
+                        if (showFreePill)
+                          Positioned(
+                            left: 10,
+                            top: 10,
+                            child: _Pill(
+                              label: 'Free',
+                              background: TamivaColors.gold,
+                              foreground: const Color(0xFF1A0F02),
+                            ),
                           ),
-                        ),
                         // "+N more" pill (top-right) when there are hidden variants
                         if (hiddenCount > 0)
                           Positioned(
@@ -182,21 +191,4 @@ class _Pill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-        border: borderColor != null ? Border.all(color: borderColor!, width: 0.8) : null,
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          color: foreground,
-          letterSpacing: 0.3,
-        ),
-      ),
-    );
-  }
-}
+      padding: const EdgeInsets.symmetric

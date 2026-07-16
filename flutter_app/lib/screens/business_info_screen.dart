@@ -57,6 +57,18 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
   List<String> _selectedPalettes = []; // v24
   List<String> _selectedFonts = [];      // v24
 
+  // Auto-advance focus chain: Business Name → Industry → Tagline →
+  // Brand Tone → Palette → Typography → Continue. Each FocusNode is
+  // requested when the previous entry "completes" — text-field IME
+  // submit for text inputs, modal-sheet return for pickers.
+  final FocusNode _nameFocus = FocusNode(debugLabel: 'name');
+  final FocusNode _industryFocus = FocusNode(debugLabel: 'industry');
+  final FocusNode _taglineFocus = FocusNode(debugLabel: 'tagline');
+  final FocusNode _toneFocus = FocusNode(debugLabel: 'tone');
+  final FocusNode _paletteFocus = FocusNode(debugLabel: 'palette');
+  final FocusNode _fontFocus = FocusNode(debugLabel: 'font');
+  final FocusNode _continueFocus = FocusNode(debugLabel: 'continue');
+
   bool _submitting = false;
   bool _loading = true;
   bool _locked = false;
@@ -175,6 +187,13 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     _taglineController.removeListener(_scheduleDraftSave);
     _nameController.dispose();
     _taglineController.dispose();
+    _nameFocus.dispose();
+    _industryFocus.dispose();
+    _taglineFocus.dispose();
+    _toneFocus.dispose();
+    _paletteFocus.dispose();
+    _fontFocus.dispose();
+    _continueFocus.dispose();
     super.dispose();
   }
 
@@ -195,6 +214,8 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     if (result != null && mounted) {
       setState(() => _selectedIndustries = result);
       _scheduleDraftSave();
+      // Auto-advance: industry selected → focus tone next.
+      _toneFocus.requestFocus();
     }
   }
 
@@ -215,6 +236,8 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     if (result != null && mounted) {
       setState(() => _selectedTones = result);
       _scheduleDraftSave();
+      // Auto-advance: tone selected → focus palette next.
+      _paletteFocus.requestFocus();
     }
   }
 
@@ -255,6 +278,8 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     if (result != null && mounted) {
       setState(() => _selectedPalettes = result);
       _scheduleDraftSave();
+      // Auto-advance: palette selected → focus typography next.
+      _fontFocus.requestFocus();
     }
   }
 
@@ -280,6 +305,8 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
     if (result != null && mounted) {
       setState(() => _selectedFonts = result);
       _scheduleDraftSave();
+      // Auto-advance: typography selected → focus Continue button.
+      _continueFocus.requestFocus();
     }
   }
 
@@ -490,10 +517,22 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                 const SizedBox(height: 24),
                 TextFormField(
                   controller: _nameController,
+                  focusNode: _nameFocus,
                   style: textTheme.bodyLarge,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) => _taglineFocus.requestFocus(),
                   decoration: const InputDecoration(labelText: 'BUSINESS NAME'),
                   validator: (v) =>
                       (v == null || v.trim().isEmpty) ? 'Required' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _taglineController,
+                  focusNode: _taglineFocus,
+                  style: textTheme.bodyLarge,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) => _industryFocus.requestFocus(),
+                  decoration: const InputDecoration(labelText: 'TAGLINE (OPTIONAL)'),
                 ),
                 const SizedBox(height: 16),
                 _IndustryPicker(
@@ -501,12 +540,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                   onTap: _pickIndustries,
                   onRemove: (label) =>
                       setState(() => _selectedIndustries.remove(label)),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _taglineController,
-                  style: textTheme.bodyLarge,
-                  decoration: const InputDecoration(labelText: 'TAGLINE (OPTIONAL)'),
+                  focusNode: _industryFocus,
                 ),
                 const SizedBox(height: 16),
                 _TonePicker(
@@ -514,6 +548,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                   onTap: _pickTones,
                   onRemove: (label) =>
                       setState(() => _selectedTones.remove(label)),
+                  focusNode: _toneFocus,
                 ),
                 const SizedBox(height: 16),
                 _PalettePicker(
@@ -521,6 +556,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                   onTap: _pickPalettes,
                   onRemove: (label) =>
                       setState(() => _selectedPalettes.remove(label)),
+                  focusNode: _paletteFocus,
                 ),
                 const SizedBox(height: 16),
                 _FontPicker(
@@ -528,6 +564,7 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                   onTap: _pickFonts,
                   onRemove: (label) =>
                       setState(() => _selectedFonts.remove(label)),
+                  focusNode: _fontFocus,
                 ),
                 const SizedBox(height: 28),
                 if (_error != null)
@@ -535,10 +572,15 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
                     padding: const EdgeInsets.only(bottom: 16),
                     child: InlineError(error: _error!),
                   ),
-                GradientCtaButton(
-                  loading: _submitting,
-                  onPressed: _submitting ? null : _submit,
-                  child: const Text('Continue  →'),
+                Focus(
+                  focusNode: _continueFocus,
+                  canRequestFocus: true,
+                  skipTraversal: true,
+                  child: GradientCtaButton(
+                    loading: _submitting,
+                    onPressed: _submitting ? null : _submit,
+                    child: const Text('Continue  →'),
+                  ),
                 ),
               ],
             ),
@@ -588,12 +630,18 @@ class UploadAssetsPlaceholder extends StatelessWidget {
 /// Tap-to-open chip picker. Renders selected items as chips inside a
 /// bordered card with a hint when nothing's picked. Tapping anywhere
 /// opens the picker modal.
+///
+/// When [focusNode] is supplied, the card becomes a focus target:
+/// requesting focus draws a gold ring around the card so the user has
+/// a visual "next" cue. The card is not a text input, so keyboard
+/// input is not consumed — focus is a visual/scroll signal only.
 class _ChipPickerCard extends StatelessWidget {
   final String label;
   final String emptyHint;
   final List<String> selected;
   final VoidCallback onTap;
   final void Function(String) onRemove;
+  final FocusNode? focusNode;
 
   const _ChipPickerCard({
     required this.label,
@@ -601,12 +649,13 @@ class _ChipPickerCard extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onRemove,
+    this.focusNode,
   });
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    return Material(
+    Widget card = Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(TamivaRadii.sm),
       child: InkWell(
@@ -637,6 +686,31 @@ class _ChipPickerCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+    if (focusNode == null) return card;
+    return Focus(
+      focusNode: focusNode,
+      // Skip the default focus traversal so keyboard arrows don't
+      // walk into this non-input card. Focus is only set via
+      // requestFocus() from the auto-advance chain.
+      canRequestFocus: true,
+      skipTraversal: true,
+      child: AnimatedBuilder(
+        animation: focusNode!,
+        builder: (context, _) {
+          final focused = focusNode!.hasFocus;
+          return Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(TamivaRadii.sm + 2),
+              border: Border.all(
+                color: focused ? TamivaColors.gold : Colors.transparent,
+                width: focused ? 2 : 0,
+              ),
+            ),
+            child: card,
+          );
+        },
       ),
     );
   }
@@ -682,10 +756,12 @@ class _IndustryPicker extends StatelessWidget {
   final List<String> selected;
   final VoidCallback onTap;
   final void Function(String) onRemove;
+  final FocusNode? focusNode;
   const _IndustryPicker({
     required this.selected,
     required this.onTap,
     required this.onRemove,
+    this.focusNode,
   });
 
   @override
@@ -696,6 +772,7 @@ class _IndustryPicker extends StatelessWidget {
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,
+      focusNode: focusNode,
     );
   }
 }
@@ -704,20 +781,23 @@ class _TonePicker extends StatelessWidget {
   final List<String> selected;
   final VoidCallback onTap;
   final void Function(String) onRemove;
+  final FocusNode? focusNode;
   const _TonePicker({
     required this.selected,
     required this.onTap,
     required this.onRemove,
+    this.focusNode,
   });
 
   @override
   Widget build(BuildContext context) {
     return _ChipPickerCard(
-      label: 'BRAND TONE (MAX 2)',
-      emptyHint: 'Tap to pick one or two tones',
+      label: 'BRAND TONE (PICK 1)',
+      emptyHint: 'Tap to pick a tone',
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,
+      focusNode: focusNode,
     );
   }
 }
@@ -726,10 +806,12 @@ class _PalettePicker extends StatelessWidget {
   final List<String> selected;
   final VoidCallback onTap;
   final void Function(String) onRemove;
+  final FocusNode? focusNode;
   const _PalettePicker({
     required this.selected,
     required this.onTap,
     required this.onRemove,
+    this.focusNode,
   });
 
   @override
@@ -740,6 +822,7 @@ class _PalettePicker extends StatelessWidget {
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,
+      focusNode: focusNode,
     );
   }
 }
@@ -748,10 +831,12 @@ class _FontPicker extends StatelessWidget {
   final List<String> selected;
   final VoidCallback onTap;
   final void Function(String) onRemove;
+  final FocusNode? focusNode;
   const _FontPicker({
     required this.selected,
     required this.onTap,
     required this.onRemove,
+    this.focusNode,
   });
 
   @override
@@ -762,6 +847,7 @@ class _FontPicker extends StatelessWidget {
       selected: selected,
       onTap: onTap,
       onRemove: onRemove,
+      focusNode: focusNode,
     );
   }
 }
@@ -773,3 +859,4 @@ Color _hexToColor(String hex) {
   final value = int.tryParse('FF$cleaned', radix: 16);
   return value == null ? TamivaColors.textFaint : Color(value);
 }
+         

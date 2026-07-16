@@ -11,6 +11,7 @@ import '../widgets/net_image.dart';
 import '../models/models.dart';
 import '../theme/tamiva_theme.dart';
 import '../widgets/cascaded_stack.dart';
+import '../widgets/exit_on_back_scope.dart';
 import '../widgets/full_screen_error.dart';
 import '../widgets/hero_scaffold.dart';
 import '../widgets/logout_action.dart';
@@ -444,76 +445,78 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return HeroBannerScaffold(
-      heroAsset: 'assets/hero/brand_assets.png',
-      // v37.1: disable the top-left back button. Leaving mid-flow would
-      // orphan an in-flight server-side generation and leave the user
-      // without a clear way back to the brand kit. The Logout button
-      // in the actions remains available if they really need to leave.
-      showBackButton: false,
-      // v37.1: title flips based on whether the logo is finished. For
-      // a fresh user with no logo yet we render the same brand-kit
-      // grid (see _buildBody) so the title should already read
-      // "Generating your brand…".
-      title: _logoReady
-          ? 'Your brand kit'
-          : 'Generating your brand…',
-      actions: [LogoutAction(apiClient: widget.apiClient)],
-      bottomBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ArtifactsScreen(
-                          apiClient: widget.apiClient,
-                          businessProfileId: widget.businessProfileId,
+    return ExitOnBackScope(
+      child: HeroBannerScaffold(
+        heroAsset: 'assets/hero/brand_assets.png',
+        // v37.1: disable the top-left back button. Leaving mid-flow would
+        // orphan an in-flight server-side generation and leave the user
+        // without a clear way back to the brand kit. The Logout button
+        // in the actions remains available if they really need to leave.
+        showBackButton: false,
+        // v37.1: title flips based on whether the logo is finished. For
+        // a fresh user with no logo yet we render the same brand-kit
+        // grid (see _buildBody) so the title should already read
+        // "Generating your brand…".
+        title: _logoReady
+            ? 'Your brand kit'
+            : 'Generating your brand…',
+        actions: [LogoutAction(apiClient: widget.apiClient)],
+        bottomBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ArtifactsScreen(
+                            apiClient: widget.apiClient,
+                            businessProfileId: widget.businessProfileId,
+                          ),
                         ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: TamivaColors.gold),
+                      foregroundColor: TamivaColors.gold,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(TamivaRadii.sm),
                       ),
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: TamivaColors.gold),
-                    foregroundColor: TamivaColors.gold,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(TamivaRadii.sm),
+                      textStyle: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.3,
+                      ),
                     ),
-                    textStyle: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
-                    ),
+                    child: const Text('Artifacts'),
                   ),
-                  child: const Text('Artifacts'),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _isPaid
-                    ? const SizedBox.shrink()
-                    : GradientCtaButton(
-                        onPressed: _openPricingScreen,
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.lock_outline,
-                                color: Color(0xFF1A0F02), size: 18),
-                            SizedBox(width: 8),
-                            Text('Upgrade to Tamiva Pro'),
-                          ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _isPaid
+                      ? const SizedBox.shrink()
+                      : GradientCtaButton(
+                          onPressed: _openPricingScreen,
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lock_outline,
+                                  color: Color(0xFF1A0F02), size: 18),
+                              SizedBox(width: 8),
+                              Text('Tamiva Pro'),
+                            ],
+                          ),
                         ),
-                      ),
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
+        body: _buildBody(context),
       ),
-      body: _buildBody(context),
     );
   }
 
@@ -682,6 +685,8 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             hiddenCount: 0,
             frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
             onFrontTap: _openPricingScreen,
+            // Website is fully Pro-locked; the "Free" pill is misleading.
+            showFreePill: false,
           ),
           const SizedBox(height: 40),
         ],
@@ -697,12 +702,17 @@ class _BrandKitSection extends StatelessWidget {
   final VoidCallback? onFrontTap;
   final VoidCallback? onLockedTap;
 
+  /// Forwarded to [CascadedStack] to suppress the gold "Free" pill on
+  /// fully Pro-locked tiles (the Website tile).
+  final bool showFreePill;
+
   const _BrandKitSection({
     required this.title,
     required this.hiddenCount,
     required this.frontChild,
     this.onFrontTap,
     this.onLockedTap,
+    this.showFreePill = true,
   });
 
   @override
@@ -722,6 +732,7 @@ class _BrandKitSection extends StatelessWidget {
         CascadedStack(
           frontChild: frontChild,
           hiddenCount: hiddenCount,
+          showFreePill: showFreePill,
           onFrontTap: onFrontTap,
           onLockedTap: onLockedTap,
         ),
@@ -1092,7 +1103,7 @@ class _WebsiteRollingPreview extends StatelessWidget {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Coming soon',
+                        'Tamiva Pro',
                         style: TextStyle(
                           color: TamivaColors.textPrimary,
                           fontWeight: FontWeight.w700,
@@ -2876,23 +2887,3 @@ class _LogoViewerScreenState extends State<_LogoViewerScreen> {
                 errorWidget: (_, __, ___) => const Center(
                   child: Icon(Icons.broken_image,
                       color: TamivaColors.textFaint, size: 32),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-// (v37) Brand Colors + Typography detail widgets removed. The
-// signup-time palette / typography preferences remain on BusinessProfile;
-// only the dashboard surfaces were dropped.
-
-// v37: hex-to-color helper retained as a no-dependency utility.
-Color _hexToColor(String hex) {
-  final cleaned = hex.replaceFirst('#', '');
-  final v = int.tryParse('FF$cleaned', radix: 16);
-  return v == null ? TamivaColors.textFaint : Color(v);
-}
