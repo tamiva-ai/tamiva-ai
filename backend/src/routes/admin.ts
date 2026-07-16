@@ -18,7 +18,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { prisma } from "../db/client.js";
+import { prisma, Prisma } from "../db/client.js";
 
 export const adminRouter = Router();
 
@@ -645,12 +645,11 @@ adminRouter.get("/logs", async (req, res) => {
     statusFilter = { in: [status] };
   }
 
-  const where: {
-    createdAt?: { gte?: Date };
-    projectId?: string;
-    operation?: { contains: string };
-    OR?: unknown[];
-  } = {};
+  // Build the base where-clause from filters. Use Prisma's runtime
+  // input type so the OR-combine later is also typed (Prisma expects
+  // Prisma.ProviderCallWhereInput | Prisma.ProviderCallWhereInput[],
+  // not a free-form `unknown[]`).
+  const where: Prisma.ProviderCallWhereInput = {};
   if (since) where.createdAt = { gte: new Date(since) };
   if (projectId) where.projectId = projectId;
   if (operation) where.operation = { contains: operation };

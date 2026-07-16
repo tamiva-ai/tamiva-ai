@@ -128,13 +128,13 @@ async function processVideoStage(job: Job<VideoJobData>) {
   });
 
   const jobId = job.id;
-    const { operationId } = await generateVideo({
-      prompt,
-      referenceImageUrls: refs.ambassadorUrl ? [refs.ambassadorUrl] : [],
-      tier: parsed.data.tier,
-      projectId,
-      jobId: String(jobId),
-    });
+  const { operationId } = await generateVideo({
+    prompt,
+    referenceImageUrls: referenceImageUrls ?? [],
+    tier,
+    projectId,
+    jobId: String(jobId),
+  });
   log("video", `submitted projectId=${projectId} operationId=${operationId}`);
 
   // Simple inline poll loop. In production this should be a separate
