@@ -881,6 +881,46 @@ class _LogoPreview extends StatelessWidget {
         ),
       );
     }
+
+    if (project!.isInProgress) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(height: 10),
+              Text('Generating your logo…',
+                  style: TextStyle(fontSize: 12, color: TamivaColors.textSecondary)),
+            ],
+          ),
+        ),
+      );
+    }
+    if (project!.isFailed || project!.assets.isEmpty) {
+      return const ColoredBox(
+        color: TamivaColors.surface,
+        child: Center(
+          child: Icon(Icons.auto_awesome, size: 32, color: TamivaColors.textFaint),
+        ),
+      );
+    }
+    return NetImage(
+      imageUrl: project!.assets.first.url,
+      fit: BoxFit.cover,
+      placeholder: (_, __) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      errorWidget: (_, __, ___) =>
+          const Icon(Icons.broken_image, color: TamivaColors.textFaint),
+    );
+  }
+}
+
 /// v37.1: shown when the Logo project failed but the user still has
 /// retries remaining. The WhatsApp pill is always visible - even
 /// while retries remain - because support is always useful.
@@ -986,44 +1026,6 @@ class _LogoSupportLockTile extends StatelessWidget {
   }
 }
 
-    if (project!.isInProgress) {
-      return const ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                height: 24,
-                width: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              SizedBox(height: 10),
-              Text('Generating your logo…',
-                  style: TextStyle(fontSize: 12, color: TamivaColors.textSecondary)),
-            ],
-          ),
-        ),
-      );
-    }
-    if (project!.isFailed || project!.assets.isEmpty) {
-      return const ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(
-          child: Icon(Icons.auto_awesome, size: 32, color: TamivaColors.textFaint),
-        ),
-      );
-    }
-    return NetImage(
-      imageUrl: project!.assets.first.url,
-      fit: BoxFit.cover,
-      placeholder: (_, __) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-      errorWidget: (_, __, ___) =>
-          const Icon(Icons.broken_image, color: TamivaColors.textFaint),
-    );
-  }
-}
 
 /// v37: Locked placeholder shown in the Website _BrandKitSection.
 /// Tapping anywhere on it opens the Pricing screen.
@@ -1188,184 +1190,6 @@ class _WebsiteRollingPreview extends StatelessWidget {
     );
   }
 }
-class _WebsiteRollingPreviewState extends State<_WebsiteRollingPreview>
-    with SingleTickerProviderStateMixin {
-  static const String _assetPath = 'assets/hero/website_preview.png';
-
-  /// Tile height matches CascadedStack's default so the rolling
-  /// frame fits the brand kit layout.
-  static const double _tileHeight = 180;
-
-  /// Time the artwork takes to pan from top to bottom once. Long
-  /// enough to feel calm, short enough that a tap-watcher actually
-  /// sees motion.
-  static const Duration _cycleDuration = Duration(seconds: 18);
-
-  /// The artwork is rendered at 2x the tile height; we pan through
-  /// one full tile height so the visible area cycles through
-  /// previously-hidden content and back. A full 2x-height pan
-  /// would leave blank space at the bottom of the tile for half
-  /// the cycle; the 1x pan keeps the visual tile full at all
-  /// times.
-  static const double _panDistance = 180;
-
-  late final AnimationController _controller;
-  bool _imageFailed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: _cycleDuration)
-      ..addStatusListener((status) {
-        // Loop the pan seamlessly: forward = top-to-bottom, reverse
-        // = bottom-to-top. A forward-only loop would snap the asset
-        // back to y=0 and look jarring. Reversing gives a smooth
-        // continuous motion the user reads as "scrolling".
-        if (status == AnimationStatus.completed) {
-          _controller.reverse();
-        } else if (status == AnimationStatus.dismissed) {
-          _controller.forward();
-        }
-      })
-      ..forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  /// Stop the rolling motion in place. After this, the controller
-  /// is held at whatever value it was at when the user tapped, so
-  /// the user lands on the exact frame they were looking at.
-  void _stopAndTap() {
-    if (_controller.isAnimating) {
-      _controller.stop();
-    }
-    widget.onTap();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Static fallback: the asset isn't bundled. Render a clean
-    // placeholder that still routes to Pricing on tap.
-    if (_imageFailed) {
-      return GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: TamivaColors.surface,
-          alignment: Alignment.center,
-          child: Text(
-            'Tap to choose a plan',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: TamivaColors.gold,
-                ),
-          ),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: _stopAndTap,
-      behavior: HitTestBehavior.opaque,
-      child: ClipRect(
-        child: SizedBox(
-          height: _tileHeight,
-          width: double.infinity,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (_, __) {
-              // Forward (0..1): y goes 0 -> -panDistance.
-              // Reverse (1..0): y goes -panDistance -> 0.
-              // Linear easing keeps the motion predictable.
-              final dy = -_panDistance * _controller.value;
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  // The translated artwork. We give it 2x tile height
-                  // so that during the forward half-cycle we reveal
-                  // content that was below the original viewport,
-                  // and during the reverse half-cycle we slide back
-                  // up. Using fitWidth keeps the image at the tile's
-                  // full width and lets the intrinsic aspect ratio
-                  // determine the rendered height; the [height]
-                  // override is a defensive minimum.
-                  Transform.translate(
-                    offset: Offset(0, dy),
-                    child: Image.asset(
-                      _assetPath,
-                      fit: BoxFit.fitWidth,
-                      width: double.infinity,
-                      errorBuilder: (_, __, ___) {
-                        // The bundle resolved the path but decoding
-                        // failed (missing/corrupt asset). Flip to
-                        // the static fallback on the next frame.
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) setState(() => _imageFailed = true);
-                        });
-                        return const SizedBox.shrink();
-                      },
-                    ),
-                  ),
-                  // Bottom scrim so the overlay text reads cleanly
-                  // over any part of the image.
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      height: 56,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            Colors.black.withOpacity(0.55),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 16,
-                    right: 16,
-                    bottom: 14,
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.touch_app_outlined,
-                          color: TamivaColors.gold,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Tap to choose a plan',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelLarge
-                                ?.copyWith(
-                                  color: TamivaColors.textPrimary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // CAROUSEL - tappable, generates 5 slides on first tap.
 
 // Top-level helpers callable from any context (the status board, the
