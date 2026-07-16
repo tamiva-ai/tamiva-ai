@@ -796,6 +796,7 @@ class _LogoPreview extends StatelessWidget {
         ),
       );
     }
+<<<<<<< HEAD
     if (project!.isInProgress) {
       return const ColoredBox(
         color: TamivaColors.surface,
@@ -835,6 +836,10 @@ class _LogoPreview extends StatelessWidget {
   }
 }
 
+=======
+  }
+}
+>>>>>>> 14f470a6866b9fe4c58e1fde4a051487291e4a0c
 /// v37.1: shown when the Logo project failed but the user still has
 /// retries remaining. The WhatsApp pill is always visible - even
 /// while retries remain - because support is always useful.
