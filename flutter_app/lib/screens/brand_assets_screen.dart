@@ -378,12 +378,18 @@ class _BrandKitSection extends StatelessWidget {
   final VoidCallback? onFrontTap;
   final VoidCallback? onLockedTap;
 
+  /// Toggle the gold "Free" pill in the top-left of the front card.
+  /// Defaults to true (every tile shows it). Set to false on tiles
+  /// whose content is fully Pro-locked (e.g. the Website tile) where
+  /// the "Free" pill would be misleading.
+  final bool showFreePill;
   const _BrandKitSection({
     required this.title,
     required this.hiddenCount,
     required this.frontChild,
     this.onFrontTap,
     this.onLockedTap,
+    this.showFreePill = true,
   });
 
   @override
@@ -402,6 +408,7 @@ class _BrandKitSection extends StatelessWidget {
         const SizedBox(height: 14),
         CascadedStack(
           frontChild: frontChild,
+          showFreePill: showFreePill,
           hiddenCount: hiddenCount,
           onFrontTap: onFrontTap,
           onLockedTap: onLockedTap,
