@@ -881,6 +881,7 @@ class _LogoPreview extends StatelessWidget {
         ),
       );
     }
+  }
 /// v37.1: shown when the Logo project failed but the user still has
 /// retries remaining. The WhatsApp pill is always visible - even
 /// while retries remain - because support is always useful.
