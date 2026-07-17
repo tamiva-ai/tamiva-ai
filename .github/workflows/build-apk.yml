@@ -61,8 +61,8 @@ jobs:
         working-directory: flutter_app
         run: flutter build appbundle --release
 
-      - name: Upload APK
+      - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
-          name: tamiva-app-release
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+        name: tamiva-app-release-aab
+        path: flutter_app/build/app/outputs/bundle/release/app-release.aab
