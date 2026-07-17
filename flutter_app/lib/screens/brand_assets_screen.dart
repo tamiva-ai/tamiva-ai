@@ -11,6 +11,7 @@ import '../widgets/net_image.dart';
 import '../models/models.dart';
 import '../theme/tamiva_theme.dart';
 import '../widgets/cascaded_stack.dart';
+import '../widgets/exit_on_back_scope.dart';
 import '../widgets/full_screen_error.dart';
 import '../widgets/hero_scaffold.dart';
 import '../widgets/logout_action.dart';
@@ -376,12 +377,18 @@ class _BrandKitSection extends StatelessWidget {
   final VoidCallback? onFrontTap;
   final VoidCallback? onLockedTap;
 
+  /// Forwarded to [CascadedStack] to suppress the gold "Free" pill on
+  /// fully Pro-locked tiles (the Website tile). Defaults to true so
+  /// the rest of the brand kit still shows it.
+  final bool showFreePill;
+
   const _BrandKitSection({
     required this.title,
     required this.hiddenCount,
     required this.frontChild,
     this.onFrontTap,
     this.onLockedTap,
+    this.showFreePill = true,
   });
 
   @override
@@ -401,6 +408,7 @@ class _BrandKitSection extends StatelessWidget {
         CascadedStack(
           frontChild: frontChild,
           hiddenCount: hiddenCount,
+          showFreePill: showFreePill,
           onFrontTap: onFrontTap,
           onLockedTap: onLockedTap,
         ),
