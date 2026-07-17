@@ -590,6 +590,20 @@ function bootstrap() {
   });
 }
 
+// v40: wrap the existing bootstrap() so that the #logs hash is
+// handled at initial load too. The IIFE must run BEFORE the
+// bootstrap() call below - otherwise the first load with
+// location.hash === "#logs" never gets routed here.
+(function patchBootstrap() {
+  var orig = window.bootstrap;
+  window.bootstrap = function() {
+    if (location.hash === "#logs") {
+      return renderLogs();
+    }
+    return orig.apply(this, arguments);
+  };
+})();
+
 window.addEventListener("hashchange", bootstrap);
 bootstrap();
 </script>
@@ -848,15 +862,4 @@ function showLogDetail(row) {
   modal.addEventListener("click", function(e) { if (e.target === modal) { modal.remove(); logsState.selected = null; } });
 }
 
-// Hook the new tab into bootstrap via hash routing.
-// Add "logs" tab: location.hash = "#logs" renders the logs view.
-(function patchBootstrap() {
-  var orig = window.bootstrap;
-  window.bootstrap = function() {
-    if (location.hash === "#logs") {
-      return renderLogs();
-    }
-    return orig.apply(this, arguments);
-  };
-})();
 </script>
