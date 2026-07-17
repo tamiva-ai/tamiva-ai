@@ -208,48 +208,12 @@ class BrandAssetsScreen extends StatefulWidget {
 }
 
 class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
-  String? _projectId;
-  Project? _project;
-  Timer? _pollTimer;
-  UserFacingError? _error;
-
-  // True while we check the backend for an existing logo on load, so we
-  // don't flash the "Generate your logo" CTA before we know the state.
-  bool _bootstrapping = true;
-  // v36 / S1.3 — distinct flag so a fetch failure shows a retry state
-  // instead of the misleading "no logo" CTA.
-  bool _bootstrapFailed = false;
-  // True while a manual logo generation request is in flight, for the
-  // CTA button's loading state.
-  bool _startingLogo = false;
-
   // v36 / S2.15 — cached tier for hiding the Upgrade CTA for Pro (S2.10).
   String _tier = 'free';
-
-  // v36 / S1.4 — generation timeout tracking.
-  DateTime? _generationStartedAt;
-  static const Duration kMaxGenerationDuration = Duration(minutes: 6);
-
-  // v37.1: independent retry counter for the Logo generation path.
-  // Bumps every time [_beginLogoGeneration] fires (both successful
-  // createLogoProject calls and immediate client-side failures
-  // count). Resets to 0 the moment a successful logo is delivered
-  // (lock-on-success). When [_logoAttempts] reaches
-  // [_logoMaxAttempts] without any successful logo, the Logo tile
-  // renders the support-only fallback permanently - further taps
-  // are dropped.
-  int _logoAttempts = 0;
-  static const int _logoMaxAttempts = 3;
-  bool get _logoLockedBehindSupport =>
-      !_logoReady &&
-      _project != null &&
-      _project!.isFailed &&
-      _logoAttempts >= _logoMaxAttempts;
 
   @override
   void initState() {
     super.initState();
-    _bootstrapLogo();
     _refreshTier();
   }
 
@@ -260,410 +224,101 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
     }
   }
 
-  /// On load, adopt any logo the user already has instead of blindly
-  /// firing a new generation on every mount (which is what spawned
-  /// duplicate logos). If a logo exists we resume/show it; if it's
-  /// still running we start polling; if none exists we fall through to
-  /// a manual "Generate your logo" CTA and wait for the user to tap it.
-  ///
-  /// v36 / S1.3 — a fetch failure no longer falls through to the
-  /// "no logo" CTA; we now show a distinct retry state so the user
-  /// never hits the "already created your logo" 429 they couldn't
-  /// understand.
-  Future<void> _bootstrapLogo() async {
-    try {
-      final projects = await widget.apiClient
-          .getBusinessProfileProjects(widget.businessProfileId);
-      final logo = projects.logo;
-      if (!mounted) return;
-      if (logo != null) {
-        setState(() {
-          _projectId = logo.id;
-          _project = logo;
-          _bootstrapping = false;
-        });
-        if (logo.isInProgress) {
-          _pollTimer =
-              Timer.periodic(const Duration(seconds: 3), (_) => _poll());
-        }
-        return;
-      }
-      if (mounted) {
-        setState(() {
-          _bootstrapping = false;
-          _bootstrapFailed = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _bootstrapping = false;
-          _bootstrapFailed = true;
-        });
-      }
-    }
-  }
-
-  // v37: brand kit no longer renders preference cards (Colors +
-  // Typography were dropped), so the business-profile snapshot load
-  // is no longer needed here. The profile is still used elsewhere in
-  // the app via getBusinessProfileByUser on cold-start.
-
   @override
   void dispose() {
-    _pollTimer?.cancel();
     super.dispose();
   }
-
-  /// Manually starts logo generation (from the CTA, a failed-row retry,
-  /// or the error-screen retry). Guards against double-fire and wires
-  /// the new project into this screen's own polling so the reveal
-  /// triggers when the logo lands.
-  ///
-  /// v37.1: bumps [_logoAttempts] on every fire and refuses to fire
-  /// when [_logoLockedBehindSupport] is true. The cap is independent
-  /// per the spec ("each widget keeps its own retry count") and is
-  /// cleared automatically when a successful logo lands.
-  Future<void> _beginLogoGeneration() async {
-    if (_startingLogo) return;
-    if (_logoLockedBehindSupport) return;
-    setState(() {
-      _startingLogo = true;
-      _error = null;
-      _generationStartedAt = DateTime.now();
-      _logoAttempts += 1;
-      // Clear the previous failed project so the tile shows the
-      // in-flight spinner cleanly instead of briefly re-rendering
-      // the prior failure row.
-      _project = null;
-      _projectId = null;
-    });
-    try {
-      final projectId = await widget.apiClient.createLogoProject(
-        businessProfileId: widget.businessProfileId,
-        stylePrompt: 'clean, modern, minimal geometric mark',
-      );
-      if (!mounted) return;
-      setState(() {
-        _projectId = projectId;
-        _startingLogo = false;
-      });
-      _pollTimer?.cancel();
-      _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
-      // Kick an immediate poll so we don't show the "Tap to generate"
-      // CTA flash during the first 3-second timer window.
-      _poll();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _startingLogo = false;
-        _error = UserFacingError.from(e, operation: 'start generation');
-      });
-    }
-  }
-
-  Future<void> _poll() async {
-    if (_projectId == null) return;
-    try {
-      final project = await widget.apiClient.getProject(_projectId!);
-      if (!mounted) return;
-      // v37.1: a successful logo permanently locks that widget per
-      // the spec ("a successful generation locks that widget
-      // permanently"). Reset the retry counter so the tile stays
-      // open and the cap can never re-engage.
-      final succeeded = project.isReady && project.assets.isNotEmpty;
-      setState(() {
-        _project = project;
-        if (succeeded) _logoAttempts = 0;
-      });
-      if (project.isReady || project.isFailed) {
-        _pollTimer?.cancel();
-      } else if (project.isInProgress && _generationStartedAt != null) {
-        // v36 / S1.4 — generation timeout.
-        final age = DateTime.now().difference(_generationStartedAt!);
-        if (age > kMaxGenerationDuration) {
-          _pollTimer?.cancel();
-          if (mounted) {
-            setState(() {
-              _error = const UserFacingError(
-                title: 'Generation is taking too long',
-                message:
-                    'This usually means the studio is overloaded. '
-                    'Tap retry and we\'ll start a fresh attempt.',
-                retryLabel: 'Retry',
-              );
-            });
-          }
-        }
-      }
-    } catch (_) {
-      // transient - retry on next tick
-    }
-  }
-
-  /// Pushes the new Pricing screen. Used by the Upgrade button and by
-  /// the Website tile (locked feature).
-  Future<void> _openPricingScreen() async {
-    final upgraded = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => PricingScreen(
-          apiClient: widget.apiClient,
-        ),
-      ),
-    );
-    if (upgraded == true && mounted) {
-      // Refresh tier + rebuild so any paid-only UI unlocks immediately.
-      await _refreshTier();
-    }
-  }
-
-  /// Generic full-screen preview kept for forward compatibility with
-  /// future Pro-only static tiles (e.g. brand strategy doc). Currently
-  /// unused — callers should use [PricingScreen] for paid upgrades.
-  // ignore: unused_element
-  Future<void> _showStaticPreview(
-    BuildContext context, {
-    required String title,
-    required Widget body,
-  }) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: TamivaColors.background,
-          appBar: AppBar(title: Text(title)),
-          body: Padding(
-            padding: const EdgeInsets.all(20),
-            child: body,
-          ),
-        ),
-      ),
-    );
-  }
-
-  bool get _logoReady => _project != null && _project!.isReady && _project!.assets.isNotEmpty;
 
   /// v37: any paid tier unlocks Pro features.
   bool get _isPaid => _tier != 'free' && _tier.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
-    return HeroBannerScaffold(
-      heroAsset: 'assets/hero/brand_assets.png',
-      // v37.1: disable the top-left back button. Leaving mid-flow would
-      // orphan an in-flight server-side generation and leave the user
-      // without a clear way back to the brand kit. The Logout button
-      // in the actions remains available if they really need to leave.
-      showBackButton: false,
-      // v37.1: title flips based on whether the logo is finished. For
-      // a fresh user with no logo yet we render the same brand-kit
-      // grid (see _buildBody) so the title should already read
-      // "Generating your brand…".
-      title: _logoReady
-          ? 'Your brand kit'
-          : 'Generating your brand…',
-      actions: [LogoutAction(apiClient: widget.apiClient)],
-      bottomBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ArtifactsScreen(
-                          apiClient: widget.apiClient,
-                          businessProfileId: widget.businessProfileId,
+    return ExitOnBackScope(
+      child: HeroBannerScaffold(
+        heroAsset: 'assets/hero/brand_assets.png',
+        // v37.1: disable the top-left back button. Leaving mid-flow would
+        // orphan an in-flight server-side generation and leave the user
+        // without a clear way back to the brand kit. The Logout button
+        // in the actions remains available if they really need to leave.
+        showBackButton: false,
+        title: 'Your brand kit',
+        actions: [LogoutAction(apiClient: widget.apiClient)],
+        bottomBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ArtifactsScreen(
+                            apiClient: widget.apiClient,
+                            businessProfileId: widget.businessProfileId,
+                          ),
                         ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: TamivaColors.gold),
+                      foregroundColor: TamivaColors.gold,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(TamivaRadii.sm),
                       ),
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: TamivaColors.gold),
-                    foregroundColor: TamivaColors.gold,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(TamivaRadii.sm),
+                      textStyle: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.3,
+                      ),
                     ),
-                    textStyle: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
-                    ),
+                    child: const Text('Artifacts'),
                   ),
-                  child: const Text('Artifacts'),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _isPaid
-                    ? const SizedBox.shrink()
-                    : GradientCtaButton(
-                        onPressed: _openPricingScreen,
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.lock_outline,
-                                color: Color(0xFF1A0F02), size: 18),
-                            SizedBox(width: 8),
-                            Text('Tamiva Pro'),
-                          ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _isPaid
+                      ? const SizedBox.shrink()
+                      : GradientCtaButton(
+                          onPressed: _openPricingScreen,
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lock_outline,
+                                  color: Color(0xFF1A0F02), size: 18),
+                              SizedBox(width: 8),
+                              Text('Tamiva Pro'),
+                            ],
+                          ),
                         ),
-                      ),
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
+        body: _buildBody(context),
       ),
-      body: _buildBody(context),
     );
   }
 
   Widget _buildBody(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-
-    if (_error != null) {
-      return FullScreenError(
-        error: _error!,
-        onRetry: () {
-          setState(() {
-            _error = null;
-            _project = null;
-            _projectId = null;
-          });
-          _beginLogoGeneration();
-        },
-      );
-    }
-
-    // Still checking the backend for an existing logo — brief spinner so
-    // we never flash the CTA and then swap it for the status board.
-    if (_bootstrapping) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    // v36 / S1.3 — bootstrap fetch failed. Show a distinct retry state
-    // instead of the misleading "no logo" CTA.
-    if (_bootstrapFailed) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(28, 40, 28, 28),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(Icons.cloud_off_outlined,
-                size: 44, color: TamivaColors.gold),
-            const SizedBox(height: 20),
-            Text(
-              "Couldn't reach the studio",
-              textAlign: TextAlign.center,
-              style: textTheme.titleLarge,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              "Check your connection and tap retry. We don't know whether "
-              "you already have a logo until the studio answers.",
-              textAlign: TextAlign.center,
-              style: textTheme.bodyMedium
-                  ?.copyWith(color: TamivaColors.textSecondary),
-            ),
-            const SizedBox(height: 28),
-            GradientCtaButton(
-              onPressed: () {
-                setState(() {
-                  _bootstrapFailed = false;
-                  _bootstrapping = true;
-                });
-                _bootstrapLogo();
-              },
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // v37.1: regardless of whether the user has a logo project yet,
-    // we always render the same 4-tile brand-kit grid below. The
-    // grid is state-aware:
-    //   * Logo tile    - _LogoPreview(project) shows either the
-    //                    "Tap to generate · 1 free logo" CTA (when
-    //                    _project == null), the spinner
-    //                    ("Generating your logo · ..."), or
-    //                    the finished image, depending on _project.
-    //                    _BrandKitSection.onFrontTap dispatches to
-    //                    _beginLogoGeneration() or openProjectPreview
-    //                    based on _logoReady.
-    //   * Carousel     - _CarouselPreview self-bootstraps from the
-    //                    server on mount and drives its own
-    //                    idle/in-progress/ready/failed state machine.
-    //   * Film         - mirrors carousel.
-    //   * Website      - locked Pro feature; routes to Pricing.
-    // The earlier standalone "Generate your logo" CTA screen and the
-    // GenerationStatusBoard row list are both intentionally removed:
-    // they're redundant with what the grid already shows, and
-    // presenting them as a separate first screen breaks the user's
-    // expectation that the studio is one continuous experience.
-    //
-    // (No early return — keep showing the 4 tiles for every
-    // combination of _projectId / _logoReady.)
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('YOUR BRAND KIT', style: textTheme.labelMedium),
-          const SizedBox(height: 8),
-          Text(
-            _logoReady
-                ? "Here's your starter kit. Unlock the full studio when you're ready."
-                : (_projectId == null
-                    ? "Tap any tile to start. Free previews land here as each one finishes."
-                    : 'Tamiva is generating your kit. Free previews will appear here as each one finishes.'),
-            style: textTheme.bodyMedium,
-          ),
+          Text("Here's your starter kit. Unlock the full studio when you're ready.",
+              style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 28),
           _BrandKitSection(
             title: 'Logo',
             hiddenCount: 0,
-            // v37.1: while _beginLogoGeneration is in flight the
-            // backend hasn't returned the project yet, so _project
-            // is still null. _LogoPreview would briefly render the
-            // "Tap to generate" CTA in that window. Show the same
-            // "Generating your logo · ..." tile the
-            // post-bootstrap in-progress state shows, so the user
-            // sees one continuous flow.
-            frontChild: _logoLockedBehindSupport
-                ? const _LogoSupportLockTile()
-                : (_project != null && _project!.isFailed
-                    ? _LogoFailedTile(
-                        attemptsLeft: _logoMaxAttempts - _logoAttempts,
-                        onTap: _beginLogoGeneration,
-                      )
-                    : ((_project == null && _startingLogo)
-                        ? _GeneratingTile(
-                            message: 'Your Logo is getting generated…',
-                            startedAt: _generationStartedAt ?? DateTime.now(),
-                          )
-                        : _LogoPreview(
-                            project: _project,
-                            starting: _startingLogo,
-                            startedAt: _generationStartedAt,
-                          )),
-
-            // v37: first-time user with no project yet can tap the
-            // Logo tile to kick off generation. After the logo lands
-            // we tap-to-open the viewer instead.
-            onFrontTap: _logoLockedBehindSupport
-                ? null
-                : (_project == null
-                    ? (_startingLogo ? null : _beginLogoGeneration)
-                    : (_project!.isReady
-                        ? () => openProjectPreview(
-                            context, widget.apiClient, _project!)
-                        : null)),
+            frontChild: _LogoPreview(
+              apiClient: widget.apiClient,
+              businessProfileId: widget.businessProfileId,
+            ),
           ),
           const SizedBox(height: 28),
           _BrandKitSection(
@@ -689,19 +344,28 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             hiddenCount: 0,
             frontChild: _WebsiteRollingPreview(onTap: _openPricingScreen),
             onFrontTap: _openPricingScreen,
-          ),
-          // WhatsApp support pill: rendered BELOW the Website tile
-          // (not inside it) so the tap target doesn't overlap the
-          // tile's own tap → Pricing gesture. Centered horizontally
-          // with a small gap from the tile's bottom edge.
-          const SizedBox(height: 12),
-          Center(
-            child: _TamivaWhatsAppButton(label: 'Need help? Chat on WhatsApp'),
+            showFreePill: false,
           ),
           const SizedBox(height: 40),
         ],
       ),
     );
+  }
+
+  /// Pushes the new Pricing screen. Used by the Upgrade button and by
+  /// the Website tile (locked feature).
+  Future<void> _openPricingScreen() async {
+    final upgraded = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => PricingScreen(
+          apiClient: widget.apiClient,
+        ),
+      ),
+    );
+    if (upgraded == true && mounted) {
+      // Refresh tier + rebuild so any paid-only UI unlocks immediately.
+      await _refreshTier();
+    }
   }
 }
 
@@ -745,98 +409,387 @@ class _BrandKitSection extends StatelessWidget {
   }
 }
 
-class _LogoPreview extends StatelessWidget {
-  final Project? project;
+// LOGO - self-contained tile, mirrors the architecture of _CarouselPreview
+// exactly so Logo / Carousel / Film all share one shape: an internal
+// state machine (idle / starting / in-flight / ready / failed /
+// support-lock), independent retry counter with cap, support-only
+// fallback after the cap is hit, lock-on-success semantics.
 
-  /// v37.1: when [starting] is true the backend hasn't returned the
-  /// new project yet, so [project] is still null. Render the spinner
-  /// instead of the "Tap to generate" CTA so the user sees one
-  /// continuous flow on retry rather than a flash of the idle state.
-  final bool starting;
-
-  /// Wall-clock time the current generation started. Only used to
-  /// drive the elapsed-time counter on the spinner. Null for first-time
-  /// users (no generation in flight).
-  final DateTime? startedAt;
-
+class _LogoPreview extends StatefulWidget {
+  final ApiClient apiClient;
+  final String businessProfileId;
   const _LogoPreview({
-    required this.project,
-    this.starting = false,
-    this.startedAt,
+    required this.apiClient,
+    required this.businessProfileId,
   });
 
   @override
+  State<_LogoPreview> createState() => _LogoPreviewState();
+}
+
+class _LogoPreviewState extends State<_LogoPreview> {
+  /// State machine:
+  ///   Idle (no project) ──tap──▶ Starting ──success──▶ InProgress
+  ///                                                       │
+  ///                                                       ├─ready──▶ Ready (terminal; taps open viewer only)
+  ///                                                       └─failed─▶ FailedRetryable (until cap reached)
+  ///                                                          │
+  ///                                                          └─cap reached──▶ LockedSupport (terminal)
+  Project? _project;
+  Timer? _pollTimer;
+  bool _requestInFlight = false;
+  DateTime? _generationStartedAt;
+  int _attempts = 0;
+  static const int _maxAttempts = 3;
+  bool _everSucceeded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _bootstrapFromExistingProject();
+  }
+
+  Future<void> _bootstrapFromExistingProject() async {
+    try {
+      final projects = await widget.apiClient
+          .getBusinessProfileProjects(widget.businessProfileId);
+      if (!mounted) return;
+      final logo = projects.logo;
+      if (logo == null) return;
+      _seedFromServerProject(logo);
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  /// Bring the local state machine in line with whatever the server
+  /// already has. Idempotent; safe to call on every mount.
+  void _seedFromServerProject(Project logo) {
+    if (logo.isReady && logo.assets.isNotEmpty) {
+      setState(() {
+        _project = logo;
+        _everSucceeded = true;
+      });
+      return;
+    }
+    if (logo.isFailed) {
+      setState(() {
+        _project = logo;
+      });
+      return;
+    }
+    if (logo.isInProgress) {
+      _startPolling(logo.id, seed: logo);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  bool get _isGenerating =>
+      _requestInFlight || (_project?.isInProgress ?? false);
+
+  bool get _isLockedBehindSupport =>
+      !_everSucceeded &&
+      _project != null &&
+      _project!.isFailed &&
+      _attempts >= _maxAttempts;
+
+  Future<void> _onTap() async {
+    if (_everSucceeded) {
+      if (_project != null && _project!.assets.isNotEmpty) {
+        await _openFullScreenViewer(context);
+      }
+      return;
+    }
+    if (_isGenerating) return;
+    if (_isLockedBehindSupport) return;
+    if (_project != null && _project!.assets.isNotEmpty) {
+      await _openFullScreenViewer(context);
+      return;
+    }
+    if (_project != null && _project!.isFailed) {
+      if (_project!.assets.isNotEmpty) {
+        await _openFullScreenViewer(context);
+        return;
+      }
+    }
+    await _startGenerationAttempt();
+  }
+
+  Future<void> _startGenerationAttempt() async {
+    if (_requestInFlight) return;
+    setState(() {
+      _requestInFlight = true;
+      _attempts += 1;
+      _generationStartedAt = DateTime.now();
+      _project = null;
+    });
+    String? projectId;
+    try {
+      projectId = await startLogoGeneration(
+        context: context,
+        apiClient: widget.apiClient,
+        businessProfileId: widget.businessProfileId,
+      );
+    } catch (_) {
+      // startLogoGeneration already surfaced a SnackBar and returned null.
+    }
+    if (!mounted) return;
+    if (projectId == null) {
+      setState(() => _requestInFlight = false);
+      return;
+    }
+    setState(() {
+      _project = Project(
+        id: projectId,
+        type: 'logo',
+        status: 'queued',
+        assets: const [],
+      );
+    });
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _poll(projectId!),
+    );
+    _poll(projectId!);
+  }
+
+  void _startPolling(String projectId, {Project? seed}) {
+    _pollTimer?.cancel();
+    setState(() => _project = seed ??
+        Project(
+          id: projectId,
+          type: 'logo',
+          status: 'queued',
+          assets: const [],
+        ));
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _poll(projectId),
+    );
+    _poll(projectId);
+  }
+
+  Future<void> _poll(String projectId) async {
+    try {
+      final project = await widget.apiClient.getProject(projectId);
+      if (!mounted) return;
+      final succeeded = project.isReady && project.assets.isNotEmpty;
+      final failed = project.isFailed;
+      setState(() {
+        _project = project;
+        if (succeeded) _everSucceeded = true;
+      });
+      if (succeeded || failed) {
+        _pollTimer?.cancel();
+      }
+    } catch (_) {
+      // transient - keep polling
+    }
+  }
+
+  Future<void> _openFullScreenViewer(BuildContext context) async {
+    if (_project == null || _project!.assets.isEmpty) return;
+    await openProjectPreview(context, widget.apiClient, _project!);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // In-flight retry: project is briefly null while a new request
-    // is in flight. Show the spinner so the user doesn't see the
-    // idle "Tap to generate" CTA flash for a frame.
-    if (project == null && starting) {
+    if (_isGenerating) {
       return _GeneratingTile(
         message: 'Your Logo is getting generated…',
-        startedAt: startedAt ?? DateTime.now(),
+        startedAt: _generationStartedAt ?? DateTime.now(),
       );
     }
-    // First-time user with no logo yet — show the tap-to-generate CTA
-    // inline so the brand kit reveal makes sense from the first screen.
-    if (project == null) {
-      return Container(
-        color: TamivaColors.surface,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        child: Row(
-          children: [
-            const Icon(Icons.auto_awesome,
-                color: TamivaColors.gold, size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Tap to generate · 1 free logo',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: TamivaColors.textPrimary,
-                      fontWeight: FontWeight.w600,
-                    ),
-              ),
-            ),
-          ],
+    if (_everSucceeded && _project != null && _project!.assets.isNotEmpty) {
+      return _LogoReadyPreview(
+        assets: _project!.assets,
+        onTap: () => _openFullScreenViewer(context),
+      );
+    }
+    if (_isLockedBehindSupport) {
+      return const _LogoSupportLockTile();
+    }
+    if (_project != null && _project!.isFailed) {
+      return GestureDetector(
+        onTap: _onTap,
+        behavior: HitTestBehavior.opaque,
+        child: _LogoFailedTile(
+          attemptsLeft: _maxAttempts - _attempts,
+          onTap: _onTap,
         ),
       );
     }
-    if (project!.isInProgress) {
-      return _GeneratingTile(
-        message: 'Your Logo is getting generated…',
-        startedAt: startedAt ?? DateTime.now(),
-      );
-    }
-    if (project!.isFailed || project!.assets.isEmpty) {
-      return const ColoredBox(
-        color: TamivaColors.surface,
-        child: Center(
-          child: Icon(Icons.auto_awesome, size: 32, color: TamivaColors.textFaint),
-        ),
-      );
-    }
-    return NetImage(
-      imageUrl: project!.assets.first.url,
-      fit: BoxFit.cover,
-      placeholder: (_, __) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-      errorWidget: (_, __, ___) =>
-          const Icon(Icons.broken_image, color: TamivaColors.textFaint),
+    return GestureDetector(
+      onTap: _onTap,
+      behavior: HitTestBehavior.opaque,
+      child: const _LogoPlaceholder(),
     );
   }
 }
 
-/// v37.1: shown when the Logo project failed but the user still has
-/// retries remaining. The WhatsApp pill is always visible - even
-/// while retries remain - because support is always useful.
+class _LogoPlaceholder extends StatelessWidget {
+  const _LogoPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: TamivaColors.surface,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            flex: 3,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Your brand mark',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Clean · Modern · Icon-led',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: TamivaColors.textSecondary),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, size: 13, color: TamivaColors.gold),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Tap to generate · Free',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: SizedBox(
+              height: double.infinity,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(0, 14, 14, 14),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: TamivaColors.surfaceRaised,
+                    borderRadius: BorderRadius.circular(TamivaRadii.md - 2),
+                    border: Border.all(
+                      color: TamivaColors.gold.withOpacity(0.25),
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.auto_awesome_outlined,
+                    color: TamivaColors.gold,
+                    size: 36,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LogoReadyPreview extends StatelessWidget {
+  final List<ProjectAsset> assets;
+  final VoidCallback onTap;
+  const _LogoReadyPreview({required this.assets, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final asset = assets.first;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        color: TamivaColors.surface,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 5,
+              child: ClipRRect(
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(TamivaRadii.md - 1),
+                  bottomLeft: Radius.circular(TamivaRadii.md - 1),
+                ),
+                child: NetImage(
+                  imageUrl: asset.url,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  errorWidget: (_, __, ___) =>
+                      const Icon(Icons.broken_image, color: TamivaColors.textFaint),
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Logo ready',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: TamivaColors.gold,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tap to view full size',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: TamivaColors.textSecondary,
+                          ),
+                    ),
+                    Row(
+                      children: [
+                        const Icon(Icons.touch_app, size: 12, color: TamivaColors.gold),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Tap',
+                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                color: TamivaColors.gold,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _LogoFailedTile extends StatelessWidget {
   final int attemptsLeft;
-
-  /// Tapping the row body retries. WhatsApp pill has its own onTap.
   final VoidCallback onTap;
-
-  const _LogoFailedTile({
-    required this.attemptsLeft,
-    required this.onTap,
-  });
+  const _LogoFailedTile({required this.attemptsLeft, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -848,11 +801,7 @@ class _LogoFailedTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       child: Row(
         children: [
-          const Icon(
-            Icons.error_outline,
-            color: TamivaColors.error,
-            size: 22,
-          ),
+          const Icon(Icons.error_outline, color: TamivaColors.error, size: 22),
           const SizedBox(width: 12),
           Expanded(
             child: GestureDetector(
@@ -884,9 +833,6 @@ class _LogoFailedTile extends StatelessWidget {
   }
 }
 
-/// v37.1: shown after the user has burned through the logo retry
-/// cap with no success. Pure support-only fallback - tap-to-retry
-/// is disabled; the WhatsApp pill is the only remaining action.
 class _LogoSupportLockTile extends StatelessWidget {
   const _LogoSupportLockTile();
 
@@ -897,11 +843,8 @@ class _LogoSupportLockTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       child: Row(
         children: [
-          const Icon(
-            Icons.support_agent_outlined,
-            color: TamivaColors.gold,
-            size: 22,
-          ),
+          const Icon(Icons.support_agent_outlined,
+              color: TamivaColors.gold, size: 22),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -909,12 +852,12 @@ class _LogoSupportLockTile extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'We couldn\'t generate this logo',
+                  "We couldn't generate this logo",
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Tap WhatsApp to reach support. We\'ll start a fresh run once we hear back.',
+                  "Tap WhatsApp to reach support. We'll start a fresh run once we hear back.",
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: TamivaColors.textSecondary,
                       ),
@@ -928,6 +871,8 @@ class _LogoSupportLockTile extends StatelessWidget {
     );
   }
 }
+
+
 
 /// v37: Locked placeholder shown in the Website _BrandKitSection.
 /// Tapping anywhere on it opens the Pricing screen.
@@ -1101,10 +1046,53 @@ class _WebsiteRollingPreview extends StatelessWidget {
   }
 }
 
+// LOGO - tappable, generates a single logo concept on first tap.
+
+// Top-level helpers callable from any context (the status board, the
+// preview widgets, anywhere). They fire the API directly - no
+// confirmation dialog (the tap on the tile is the user's intent; the
+// tile copy already shows the cost line).
+
+/// Kicks off a logo generation. Fires the request and returns the
+/// new projectId. Returns null on failure.
+///
+/// v37: dropped the cost-estimate confirmation dialog. The tap on the
+/// tile is itself the user's intent; an extra modal was just friction
+/// now that plans are flat (every paid plan gets unlimited). The
+/// "Cost" line on the tile is enough context.
+Future<String?> startLogoGeneration({
+  required BuildContext context,
+  required ApiClient apiClient,
+  required String businessProfileId,
+}) async {
+  try {
+    return await apiClient.createLogoProject(
+      businessProfileId: businessProfileId,
+      stylePrompt: 'clean, modern, minimal geometric mark',
+    );
+  } on ApiException catch (e) {
+    if (!context.mounted) return null;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(UserFacingError.from(e, operation: 'start logo').message),
+      ),
+    );
+    return null;
+  } catch (e) {
+    if (!context.mounted) return null;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(UserFacingError.from(e, operation: 'start logo').message),
+      ),
+    );
+    return null;
+  }
+}
+
 // CAROUSEL - tappable, generates 5 slides on first tap.
 
 // Top-level helpers callable from any context (the status board, the
-// preview widgets, anywhere). They fire the API directly — no
+// preview widgets, anywhere). They fire the API directly - no
 // confirmation dialog (the tap on the tile is the user's intent; the
 // tile copy already shows the cost line).
 
