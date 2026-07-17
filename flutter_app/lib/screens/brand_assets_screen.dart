@@ -543,9 +543,10 @@ class _LogoPreviewState extends State<_LogoPreview> {
       setState(() => _requestInFlight = false);
       return;
     }
+    final pid = projectId;
     setState(() {
       _project = Project(
-        id: projectId,
+        id: pid,
         type: 'logo',
         status: 'queued',
         assets: const [],
@@ -554,9 +555,9 @@ class _LogoPreviewState extends State<_LogoPreview> {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(
       const Duration(seconds: 3),
-      (_) => _poll(projectId!),
+      (_) => _poll(pid!),
     );
-    _poll(projectId!);
+    _poll(pid!);
   }
 
   void _startPolling(String projectId, {Project? seed}) {
