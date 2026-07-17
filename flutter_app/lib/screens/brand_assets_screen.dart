@@ -347,6 +347,13 @@ class _BrandAssetsScreenState extends State<BrandAssetsScreen> {
             onFrontTap: _openPricingScreen,
             showFreePill: false,
           ),
+          const SizedBox(height: 12),
+          // WhatsApp support shortcut, centered horizontally directly
+          // below the Website tile so it's discoverable but doesn't
+          // overlap the tile's own tap-to-Pricing gesture.
+          Center(
+            child: _TamivaWhatsAppButton(label: 'Need help? Chat on WhatsApp'),
+          ),
           const SizedBox(height: 40),
         ],
       ),
@@ -1399,15 +1406,24 @@ class _CarouselPreviewState extends State<_CarouselPreview> {
     // Promote projectId to a non-nullable local so the closure
     // passed to Timer.periodic captures a String (Dart's flow
     // analysis can't promote across the closure boundary).
+  // After the early return above, projectId is non-null. Hoist it
+    // into a local final so the Dart analyzer accepts it inside the
+    // setState callback (which has its own generic type context).
+    // Reset _requestInFlight in the SAME setState that creates the
+    // _project, mirroring _CarouselPreviewState. Without this, the
+    // tile would stay "in flight" forever because _isGenerating is
+    // `_requestInFlight || project.isInProgress` and the server-side
+    // status polled back is 'queued' (not in-progress), so the only
+    // way out of in-flight is clearing _requestInFlight.
     final pid = projectId;
     setState(() {
       _requestInFlight = false;
       _project = Project(
         id: pid,
-        type: 'carousel',
+        type: 'logo',
         status: 'queued',
         assets: const [],
-      );
+      ),
     });
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(
