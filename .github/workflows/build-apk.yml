@@ -52,12 +52,12 @@ jobs:
         working-directory: flutter_app
         run: dart run flutter_launcher_icons
 
-      - name: Set app display name to Tamiva
+            - name: Set app display name to Tamiva
         working-directory: flutter_app
         run: |
           sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
 
-            - name: Build AAB
+      - name: Build AAB
         working-directory: flutter_app
         run: flutter build appbundle --release
 
