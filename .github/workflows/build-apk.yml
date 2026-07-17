@@ -1,17 +1,21 @@
-name: Build Android APK
+name: Build Android
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch: {}
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version-file: .github/flutter-version
 
@@ -27,21 +31,34 @@ jobs:
           if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
             flutter create . --platforms=android --org com.tamiva
           else
-            echo "android/app/src/main/AndroidManifest.xml already present - skipping flutter create to avoid overwriting lib/."
+            echo "Android project already exists. Skipping flutter create."
           fi
 
       - name: Ensure INTERNET permission and browser queries
         working-directory: flutter_app
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
+
           if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
             sed -i '/<manifest /a\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
           fi
+
           if ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$MANIFEST"; then
             sed -i '/<manifest /a\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>' "$MANIFEST"
           fi
+
           if ! grep -q "<queries>" "$MANIFEST"; then
-            sed -i '/<\/manifest>/i\    <queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="https" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="http" />\n        </intent>\n    </queries>' "$MANIFEST"
+            sed -i '/<\/manifest>/i\
+            <queries>\
+              <intent>\
+                <action android:name="android.intent.action.VIEW"/>\
+                <data android:scheme="https"/>\
+              </intent>\
+              <intent>\
+                <action android:name="android.intent.action.VIEW"/>\
+                <data android:scheme="http"/>\
+              </intent>\
+            </queries>' "$MANIFEST"
           fi
 
       - name: Install dependencies
@@ -52,14 +69,24 @@ jobs:
         working-directory: flutter_app
         run: dart run flutter_launcher_icons
 
-            - name: Set app display name to Tamiva
+      - name: Set app display name
         working-directory: flutter_app
         run: |
           sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
 
+      - name: Build APK
+        working-directory: flutter_app
+        run: flutter build apk --release
+
       - name: Build AAB
         working-directory: flutter_app
         run: flutter build appbundle --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamiva-app-release-apk
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
