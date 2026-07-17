@@ -576,7 +576,7 @@ class _LogoPreviewState extends State<_LogoPreview> {
         type: 'logo',
         status: 'queued',
         assets: const [],
-      ),
+      );
     });
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(
