@@ -53,6 +53,20 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 const port = process.env.PORT ?? 4000;
+
+// Boot-time check on the Gemini API key. Logging success here means
+// the value is present and non-empty; we never log the value itself.
+// Without this we'd silently serve 401/404 from the worker for any
+// video request and have no log line to correlate against.
+{
+  const k = process.env.GEMINI_API_KEY;
+  if (!k) {
+    console.warn("[boot] GEMINI_API_KEY is NOT set - video generation will fail at request time.");
+  } else {
+    console.log(`[boot] GEMINI_API_KEY present (length=${k.length})`);
+  }
+}
+
 app.listen(port, () => {
   console.log(`Tamiva backend listening on port ${port}`);
 });

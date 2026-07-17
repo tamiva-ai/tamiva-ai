@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Worker, Job } from "bullmq";
 import { connection, LogoJobData, CarouselJobData, VideoJobData } from "./index.js";
 import { generateImage, generateCarouselSlides } from "../providers/openaiImage.js";
-import { generateVideo, pollVideoOperation } from "../providers/geminiVideo.js";
+import { generateVideo, pollVideoOperation, downloadVideo } from "../providers/geminiVideo.js";
 import { prisma } from "../db/client.js";
 import { pruneOldProviderCalls } from "../util/providerLog.js";
 
@@ -115,7 +115,7 @@ async function processCarousel(job: Job<CarouselJobData>) {
 }
 
 async function processVideoStage(job: Job<VideoJobData>) {
-  const { projectId, prompt, referenceImageUrls, tier, firstFrameUrl } = job.data;
+  const { projectId, prompt, referenceImageUrls, tier, firstFrameUrl, lastFrameUrl } = job.data;
   const startedAt = Date.now();
   log("video", `start projectId=${projectId} tier=${tier} refs=${referenceImageUrls.length}`);
 
@@ -128,14 +128,37 @@ async function processVideoStage(job: Job<VideoJobData>) {
   });
 
   const jobId = job.id;
-  const { operationId } = await generateVideo({
+  // v38-compatible signature: provider calls record ProviderCall rows
+  // with projectId + jobId. The new code uses the real Veo 3.0 model
+  // IDs and the correct `:generateVideos` REST endpoint.
+  const { operationId, model } = await generateVideo({
     prompt,
     referenceImageUrls: referenceImageUrls ?? [],
     tier,
+    firstFrameUrl,
+    lastFrameUrl,
     projectId,
     jobId: String(jobId),
   });
-  log("video", `submitted projectId=${projectId} operationId=${operationId}`);
+  log("video", `submitted projectId=${projectId} operationId=${operationId} model=${model}`);
+
+  // Persist the chosen model + operation id on GenerationJob.inputPayload
+  // so the admin portal / debug view shows what we actually called. We
+  // update the most-recent job row (not all rows for the project) to
+  // avoid clobbering earlier stages.
+  await prisma.generationJob.updateMany({
+    where: { projectId, status: { in: ["queued", "running"] } },
+    data: {
+      status: "running",
+      inputPayload: {
+        // Prisma's Json type doesn't accept a typed spread on
+        // VideoJobData (no index signature) - cast through unknown.
+        ...(job.data as unknown as Record<string, unknown>),
+        model,
+        operationId,
+      } as object,
+    },
+  });
 
   // Simple inline poll loop. In production this should be a separate
   // delayed requeue so the worker thread isn't held for the full video
@@ -143,14 +166,18 @@ async function processVideoStage(job: Job<VideoJobData>) {
   let status = await pollVideoOperation(operationId, projectId, String(jobId));
   let attempts = 0;
   const MAX_POLL_ATTEMPTS = 240; // ~20 minutes at 5s intervals
+  const POLL_INTERVAL_MS = 5_000;
   while (!status.done && attempts < MAX_POLL_ATTEMPTS) {
-    await new Promise((r) => setTimeout(r, 5000));
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     attempts++;
     status = await pollVideoOperation(operationId, projectId, String(jobId));
     // Heartbeat every 6 polls (30s) so an idle worker doesn't look frozen
     // in the logs without spamming them on every single tick.
     if (attempts % 6 === 0) {
-      log("video", `polling projectId=${projectId} attempt=${attempts} done=${status.done}`);
+      log(
+        "video",
+        `polling projectId=${projectId} op=${operationId} attempt=${attempts}/${MAX_POLL_ATTEMPTS} done=${status.done} ms=${Date.now() - startedAt}`,
+      );
     }
   }
 
@@ -160,12 +187,25 @@ async function processVideoStage(job: Job<VideoJobData>) {
   if (status.error) {
     throw new Error(status.error);
   }
+  if (!status.videoUrl) {
+    throw new Error("Video reported done but no video URL");
+  }
+
+  // NEW: download the MP4 bytes from Google's file URI to disk. The
+  // raw URI is short-lived (~1h) and the Flutter client expects a
+  // stable URL on our own backend. downloadVideo() writes to
+  // uploads/<uuid>.mp4 and returns the persistent public URL.
+  const downloaded = await downloadVideo(status.videoUrl, projectId, String(jobId));
+  log(
+    "video",
+    `downloaded projectId=${projectId} bytes=${downloaded.byteLength} url=${downloaded.publicUrl}`,
+  );
 
   await prisma.asset.create({
     data: {
       projectId,
       type: "video_final",
-      url: status.videoUrl ?? "",
+      url: downloaded.publicUrl,
     },
   });
 
@@ -173,7 +213,10 @@ async function processVideoStage(job: Job<VideoJobData>) {
     where: { id: projectId },
     data: { status: "ready" },
   });
-  log("video", `done projectId=${projectId} polls=${attempts} ms=${Date.now() - startedAt}`);
+  log(
+    "video",
+    `done projectId=${projectId} polls=${attempts} bytes=${downloaded.byteLength} ms=${Date.now() - startedAt}`,
+  );
 }
 
 export const worker = new Worker(
@@ -233,3 +276,5 @@ async function runMaintenance() {
 
 void runMaintenance();
 setInterval(runMaintenance, 6 * 60 * 60 * 1000).unref();
+
+console.log("Worker started, listening on 'generation' queue");
