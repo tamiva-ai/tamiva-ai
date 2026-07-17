@@ -616,6 +616,7 @@ var logsState = {
   filterProjectId: '',
   filterOperation: '',
   filterStatus: '',
+  filterSource: 'provider',
   selected: null,
   timer: null,
 };
@@ -646,13 +647,28 @@ function statusPillForLog(s, kind) {
 }
 
 function rowHtml(log) {
+  // The same rowHtml renders both worker logs (ProviderCall, source
+  // omitted or absent) and client logs (ClientLog, source="client").
+  var isClient = log.source === 'client';
+  // Display name for the "operation" column: method+URL for client,
+  // operation name for worker.
+  var op = isClient
+    ? (log.method + ' ' + (log.url || ''))
+    : (log.operation || (log.method ? log.method + ' ' + (log.url || '') : '-'));
+  // Worker logs use `status` (HTTP code or null). Client logs use
+  // `statusCode`. statusPillForLog handles both.
+  var status = isClient ? log.statusCode : log.status;
+  var duration = isClient ? (log.elapsedMs || '-') : (log.durationMs + ' ms');
+  var project = isClient
+    ? (log.businessProfileId ? log.businessProfileId.slice(0, 8) : (log.userId ? log.userId.slice(0, 8) : '-'))
+    : (log.projectId ? log.projectId.slice(0, 8) : '-');
   return ''
     + '<tr class="clickable" data-log-id="' + escapeHtml(log.id) + '">'
     + '  <td><code style="font-size: 11px;">' + escapeHtml(log.id.slice(0, 8)) + '</code></td>'
-    + '  <td>' + escapeHtml(log.operation) + '</td>'
-    + '  <td>' + statusPillForLog(log.status, log.errorKind) + '</td>'
-    + '  <td class="num">' + log.durationMs + ' ms</td>'
-    + '  <td><code style="font-size: 11px;">' + escapeHtml(log.projectId ? log.projectId.slice(0, 8) : "-") + '</code></td>'
+    + '  <td>' + escapeHtml(op) + '</td>'
+    + '  <td>' + statusPillForLog(status, log.errorKind || log.errorType) + '</td>'
+    + '  <td class="num">' + escapeHtml(String(duration)) + '</td>'
+    + '  <td><code style="font-size: 11px;">' + escapeHtml(project) + '</code></td>'
     + '  <td style="color: var(--text-faint); white-space: nowrap;">' + fmtRel(log.createdAt) + '</td>'
     + '</tr>';
 }
@@ -674,6 +690,12 @@ function renderLogs() {
     + '  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 12px; align-items: end;">'
     + '    <div><label class="label">Project ID</label><input id="f-project" class="input" placeholder="full UUID" /></div>'
     + '    <div><label class="label">Operation contains</label><input id="f-operation" class="input" placeholder="e.g. generateImage" /></div>'
+    + '    <div><label class="label">Source</label>'
+    + '      <select id="f-source" class="input">'
+    + '        <option value="provider">Worker (OpenAI / Gemini)</option>'
+    + '        <option value="client">Client (Flutter app)</option>'
+    + '      </select>'
+    + '    </div>'
     + '    <div><label class="label">Status</label>'
     + '      <select id="f-status" class="input">'
     + '        <option value="">all</option>'
@@ -703,33 +725,58 @@ function renderLogs() {
   // Restore filter inputs from state
   $("#f-project").value = logsState.filterProjectId;
   $("#f-operation").value = logsState.filterOperation;
+  $("#f-source").value = logsState.filterSource;
   $("#f-status").value = logsState.filterStatus;
 
   function refresh() {
     var qs = [];
+    if (logsState.filterSource === "client") {
+      // Client logs come from /admin/client-logs which has a different
+      // query shape (url, method, userId instead of projectId, operation).
+      if (logsState.filterStatus) qs.push("status=" + encodeURIComponent(logsState.filterStatus));
+      qs.push("limit=200");
+      api("/admin/client-logs?" + qs.join("&")).then(handleClientRows).catch(handleError);
+      return;
+    }
     if (logsState.filterProjectId) qs.push("projectId=" + encodeURIComponent(logsState.filterProjectId));
     if (logsState.filterOperation) qs.push("operation=" + encodeURIComponent(logsState.filterOperation));
     if (logsState.filterStatus) qs.push("status=" + encodeURIComponent(logsState.filterStatus));
     qs.push("limit=200");
+    api("/admin/logs?" + qs.join("&")).then(handleProviderRows).catch(handleError);
+  }
 
-    api("/admin/logs?" + qs.join("&")).then(function(resp) {
-      var tbody = $("#logs-tbody");
-      if (resp.logs.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty">No log rows match.</td></tr>';
-        return;
-      }
-      tbody.innerHTML = resp.logs.map(rowHtml).join("");
-      // Wire row clicks
-      Array.prototype.forEach.call(tbody.querySelectorAll("tr.clickable"), function(tr) {
-        tr.addEventListener("click", function() {
-          var id = tr.dataset.logId;
-          var row = resp.logs.find(function(r) { return r.id === id; });
-          if (row) showLogDetail(row);
-        });
+  function handleProviderRows(resp) {
+    var tbody = $("#logs-tbody");
+    if (!resp.logs || resp.logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No log rows match.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = resp.logs.map(rowHtml).join("");
+    wireRowClicks(tbody, resp.logs);
+  }
+
+  function handleClientRows(resp) {
+    var tbody = $("#logs-tbody");
+    if (!resp.logs || resp.logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No log rows match.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = resp.logs.map(rowHtml).join("");
+    wireRowClicks(tbody, resp.logs);
+  }
+
+  function wireRowClicks(tbody, logs) {
+    Array.prototype.forEach.call(tbody.querySelectorAll("tr.clickable"), function(tr) {
+      tr.addEventListener("click", function() {
+        var id = tr.dataset.logId;
+        var row = logs.find(function(r) { return r.id === id; });
+        if (row) showLogDetail(row);
       });
-    }).catch(function(err) {
-      $("#logs-tbody").innerHTML = '<tr><td colspan="6" class="err">' + escapeHtml(err.message) + '</td></tr>';
     });
+  }
+
+  function handleError(err) {
+    $("#logs-tbody").innerHTML = '<tr><td colspan="6" class="err">' + escapeHtml(err.message) + '</td></tr>';
   }
   refresh();
   logsState.timer = setInterval(refresh, 5000);
@@ -738,6 +785,7 @@ function renderLogs() {
     logsState.filterProjectId = $("#f-project").value.trim();
     logsState.filterOperation = $("#f-operation").value.trim();
     logsState.filterStatus = $("#f-status").value.trim();
+    logsState.filterSource = $("#f-source").value || "provider";
     refresh();
   });
   $("#refresh-logs").addEventListener("click", refresh);

@@ -244,3 +244,32 @@ model ProviderCall {
   @@index([operation])
   @@index([status])
 }
+
+// ---------------------------------------------------------------------
+// v39: Client-side HTTP logs. Records every request the Flutter app
+// makes to the backend. The LoggingHttpClient on the client POSTs to
+// /admin/logs; we persist the row here and surface it in the admin
+// UI alongside the worker-side ProviderCall rows.
+// ---------------------------------------------------------------------
+model ClientLog {
+  id                  String   @id @default(uuid())
+  level               String
+  method              String
+  url                 String
+  statusCode          Int?
+  elapsedMs           Int?
+  requestBody         String?
+  responseBody        String?
+  errorType           String?
+  errorMessage        String?
+  userId              String?
+  businessProfileId   String?
+  clientCorrelationId String?
+  createdAt           DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([url])
+  @@index([userId])
+  @@index([statusCode])
+  @@index([clientCorrelationId])
+}

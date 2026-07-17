@@ -625,6 +625,11 @@ const listLogsSchema = z.object({
     .union([z.coerce.number().int().min(100).max(599), z.literal("error")])
     .optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
+  // v39: log source. "provider" = worker→OpenAI/Gemini (default so
+  // existing admin UI keeps working); "client" = app→backend; "all"
+  // merges both tables tagged with `source` so the admin UI can
+  // colour-code them.
+  type: z.enum(["provider", "client", "all"]).default("provider"),
 });
 
 adminRouter.get("/logs", async (req, res) => {
@@ -685,4 +690,145 @@ adminRouter.get("/logs", async (req, res) => {
       createdAt: r.createdAt.toISOString(),
     })),
   });
+});
+
+/**
+ * v39: GET /admin/client-logs
+ *
+ * Returns recent ClientLog rows (every request the Flutter app made
+ * to the backend). Same filter shape as /admin/logs but queries the
+ * ClientLog table. Use the ?type=client param on /admin/logs as the
+ * unified entry point; this route is kept for callers that want
+ * pure client-side data.
+ */
+const clientLogQuerySchema = z.object({
+  since: z.string().datetime().optional(),
+  url: z.string().optional(),
+  userId: z.string().optional(),
+  method: z.string().optional(),
+  status: z
+    .union([z.coerce.number().int().min(100).max(599), z.literal("error")])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
+
+adminRouter.get("/client-logs", async (req, res) => {
+  const parsed = clientLogQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  const { since, url, userId, method, status, limit } = parsed.data;
+
+  // Status filter: "error" => status NOT in 2xx OR status is null.
+  // Numeric => status = that code. Undefined => any status.
+  const where: Prisma.ClientLogWhereInput = {};
+  if (since) where.createdAt = { gte: new Date(since) };
+  if (url) where.url = { contains: url };
+  if (userId) where.userId = userId;
+  if (method) where.method = method;
+  if (status === "error") {
+    where.OR = [
+      { NOT: { statusCode: { in: [200, 201, 202, 203, 204, 205, 206, 207, 208, 226] } } },
+      { statusCode: null },
+    ] as Prisma.ClientLogWhereInput[];
+  } else if (typeof status === "number") {
+    where.statusCode = status;
+  }
+
+  const rows = await prisma.clientLog.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+
+  res.json({
+    count: rows.length,
+    logs: rows.map((r) => ({
+      id: r.id,
+      source: "client",
+      level: r.level,
+      method: r.method,
+      url: r.url,
+      statusCode: r.statusCode,
+      elapsedMs: r.elapsedMs,
+      requestBody: r.requestBody,
+      responseBody: r.responseBody,
+      errorType: r.errorType,
+      errorMessage: r.errorMessage,
+      userId: r.userId,
+      businessProfileId: r.businessProfileId,
+      clientCorrelationId: r.clientCorrelationId,
+      createdAt: r.createdAt.toISOString(),
+    })),
+  });
+});
+
+/**
+ * v39: POST /admin/logs
+ *
+ * The Flutter client's LoggingHttpClient POSTs here on every outbound
+ * request, response, and error. We persist each entry as a ClientLog
+ * row keyed by `clientCorrelationId` so the admin UI can show the
+ * request body next to the matching response body (and any error
+ * that came back from the network) as a single bundle.
+ *
+ * Auth: same ADMIN_API_KEY check as every other /admin/* route. The
+ * Flutter client is expected to send the key in the ?key=... query
+ * param (which the LoggingHttpClient already does) or in an
+ * x-admin-key header.
+ *
+ * Validation is intentionally lenient: missing fields default to null
+ * so a half-broken client payload still records something useful.
+ */
+const logEntrySchema = z.object({
+  // "request" | "response" | "error". Anything else is accepted as
+  // text - the admin UI's badge color depends on these three values
+  // but the column itself is TEXT so we don't reject here.
+  level: z.string().min(1).max(20),
+  method: z.string().min(1).max(10),
+  url: z.string().min(1).max(2048),
+  statusCode: z.coerce.number().int().min(100).max(599).optional(),
+  elapsedMs: z.coerce.number().int().min(0).max(600_000).optional(),
+  requestBody: z.string().max(64 * 1024).optional(),
+  responseBody: z.string().max(64 * 1024).optional(),
+  errorType: z.string().max(200).optional(),
+  errorMessage: z.string().max(64 * 1024).optional(),
+  // The LoggingHttpClient on the client sets these from ApiClient.state.
+  userId: z.string().max(128).optional(),
+  businessProfileId: z.string().max(128).optional(),
+  // Groups request+response+error. The client generates this; we use it
+  // as-is so the admin UI can join rows in the same call.
+  clientCorrelationId: z.string().max(64).optional(),
+});
+
+adminRouter.post("/logs", async (req, res) => {
+  const parsed = logEntrySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  const e = parsed.data;
+  // Best-effort persist. We do NOT await acknowledgement back to the
+  // client - the LoggingHttpClient uses fire-and-forget for a reason,
+  // so a slow INSERT here would never block the user's tap.
+  prisma.clientLog
+    .create({
+      data: {
+        level: e.level,
+        method: e.method,
+        url: e.url,
+        statusCode: e.statusCode,
+        elapsedMs: e.elapsedMs,
+        requestBody: e.requestBody,
+        responseBody: e.responseBody,
+        errorType: e.errorType,
+        errorMessage: e.errorMessage,
+        userId: e.userId,
+        businessProfileId: e.businessProfileId,
+        clientCorrelationId: e.clientCorrelationId,
+      },
+    })
+    .catch((err) => {
+      console.error("[admin/logs] failed to persist client log:", err);
+    });
+  res.status(204).end();
 });
