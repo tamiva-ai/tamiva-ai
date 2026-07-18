@@ -589,8 +589,16 @@ console.log("publicBase =", publicBase);
 console.log("================================");
 
 const publicUrl = `${publicBase.replace(/\/$/, "")}/uploads/${filename}`;
-      const publicBase = process.env.PUBLIC_BASE_URL ?? "http://localhost:4000";
-      const publicUrl = `${publicBase.replace(/\/$/, "")}/uploads/${filename}`;
+      console.log("================================");
+console.log("PUBLIC_BASE_URL =", process.env.PUBLIC_BASE_URL);
+
+const publicBase =
+  process.env.PUBLIC_BASE_URL ?? "http://localhost:4000";
+
+console.log("publicBase =", publicBase);
+console.log("================================");
+
+const publicUrl = `${publicBase.replace(/\/$/, "")}/uploads/${filename}`;
 
       log(
         "gemini-download",
