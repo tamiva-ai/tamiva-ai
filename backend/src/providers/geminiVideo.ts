@@ -271,16 +271,23 @@ console.log("Body:");
 console.log(JSON.stringify(body, null, 2));
 console.log("=========================");
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    const request = new Request(url, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey,
+  },
+  body: JSON.stringify(body),
+  signal: controller.signal,
+});
 
+console.log("===== REQUEST HEADERS ACTUALLY SENT =====");
+for (const [k, v] of request.headers.entries()) {
+  console.log(`${k}: ${v}`);
+}
+console.log("========================================");
+
+const res = await fetch(request);
     console.log("===== RESPONSE =====");
 console.log("Status:", res.status);
 
