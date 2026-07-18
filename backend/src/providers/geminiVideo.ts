@@ -15,16 +15,21 @@
  * 404'd on every request. That's why AI Studio showed zero traffic.
  *
  * Wire shape:
- *   POST https://generativelanguage.googleapis.com/v1beta/models/{model}:predictLongRunning?key=API_KEY
+ *   POST https://generativelanguage.googleapis.com/v1beta/models/{model}:predictLongRunning
+ *        header x-goog-api-key: <API_KEY>
  *   body: { instances: [{ prompt }], parameters: { aspectRatio, durationSeconds } }
  *   response: { name: "operations/<uuid>" or "models/.../operations/<uuid>" }
  *
  * Polling:
- *   GET https://generativelanguage.googleapis.com/v1beta/{name}?key=API_KEY
+ *   GET https://generativelanguage.googleapis.com/v1beta/{name}
+ *       header x-goog-api-key: <API_KEY>
  *   response (when done): { name, done: true, response: { videos: [{ uri?, bytesBase64Encoded?, mimeType? }] } }
  *
- * Auth: API key via ?key= query param (paid tier, ~2 RPM and 30 RPD
- * on veo-3.1-fast-generate-preview as of 2026-07-18 on Tier 1).
+ * Auth: API key via `x-goog-api-key` header (paid tier, ~2 RPM and
+ * 30 RPD on veo-3.1-fast-generate-preview as of 2026-07-18 on Tier 1).
+ * Note: ?key= query param works for most Gemini API methods but is
+ * rejected (401 ACCESS_TOKEN_TYPE_UNSUPPORTED) by :predictLongRunning.
+ * The header form is what Google accepts.
  *
  * Quotas to respect:
  *   - 2 RPM: at most one render every 30s on average. The submit
@@ -126,10 +131,6 @@ function getApiKey(): string {
       "GEMINI_API_KEY is not configured. Set it in Railway -> Variables.",
     );
   }
-  console.log("========== GEMINI KEY DEBUG ==========");
-  console.log("Key prefix:", k.substring(0, 8));
-  console.log("Key length:", k.length);
-  console.log("======================================");
   return k;
 }
 
@@ -254,39 +255,32 @@ async function submitOnce(
     },
   };
 
-  const url = `${GEMINI_API_BASE}/models/${model}:predictLongRunning?key=${encodeURIComponent(apiKey)}`;
+  const url = `${GEMINI_API_BASE}/models/${model}:predictLongRunning`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   log("gemini", `submit model=${model} promptLen=${req.prompt.length}`);
 
   try {
-    console.log("========== GEMINI DEBUG ==========");
-    console.log("Node Version:", process.version);
-    console.log("Model:", model);
-    console.log("URL:", url.replace(apiKey, "***"));
-    console.log("Headers:", {
-      "Content-Type": "application/json",
-});
-console.log("==================================");
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
     const text = await res.text();
-
-if (!res.ok) {
-  log(
-    "gemini",
-    `submit FAIL status=${res.status} FULL_BODY=${text} ms=${Date.now() - startedAt}`,
-  );
-
-  throw new Error(
-    `Gemini video generation failed: ${res.status} ${text}`
-  );
-}
+    if (!res.ok) {
+      log(
+        "gemini",
+        `submit FAIL status=${res.status} body=${truncate(text, 500)} ms=${Date.now() - startedAt}`,
+      );
+      throw new Error(
+        `Gemini video generation failed: ${res.status} ${truncate(text, 300)}`,
+      );
+    }
 
     let data: { name?: string };
     try {
@@ -350,13 +344,17 @@ export async function pollVideoOperation(
     request: { operationId },
     fn: async () => {
       const apiKey = getApiKey();
-      const url =
-        `${GEMINI_API_BASE}/${operationId}?key=${encodeURIComponent(apiKey)}`;
+      const url = `${GEMINI_API_BASE}/${operationId}`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
 
       try {
-        const res = await fetch(url, { signal: controller.signal });
+        const res = await fetch(url, {
+          headers: {
+            "x-goog-api-key": apiKey,
+          },
+          signal: controller.signal,
+        });
         const text = await res.text();
 
         if (!res.ok) {
