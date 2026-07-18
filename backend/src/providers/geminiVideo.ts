@@ -242,7 +242,10 @@ async function submitOnce(
   durationSeconds: number,
   startedAt: number,
 ): Promise<VideoGenResult> {
-  const apiKey = getApiKey();
+const apiKey = getApiKey();
+
+console.log("ENV GEMINI_API_KEY =", process.env.GEMINI_API_KEY);
+console.log("getApiKey() =", apiKey);
 
   // Public Gemini REST surface for Veo accepts only these parameter
   // fields. personGeneration and storageUri are Vertex-only and
