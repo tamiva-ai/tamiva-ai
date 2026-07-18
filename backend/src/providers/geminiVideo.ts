@@ -257,6 +257,14 @@ async function submitOnce(
   log("gemini", `submit model=${model} promptLen=${req.prompt.length}`);
 
   try {
+    console.log("========== GEMINI DEBUG ==========");
+    console.log("Node Version:", process.version);
+    console.log("Model:", model);
+    console.log("URL:", url.replace(apiKey, "***"));
+    console.log("Headers:", {
+      "Content-Type": "application/json",
+});
+console.log("==================================");
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
