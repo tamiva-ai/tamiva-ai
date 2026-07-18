@@ -17,20 +17,6 @@ function log(stage: string, message: string) {
   console.log(`[${ts}] [${stage}] ${message}`);
 }
 
-/**
- * Per-artifact daily rate limit. Counts the number of Project rows for
- * a given businessProfile+type pair created since the start of the
- * user's local day (UTC midnight is a fine approximation; refine to a
- * per-user TZ once we have one).
- *
- * IMPORTANT: this check MUST run in the route handler BEFORE creating
- * the new Project row. If it runs in the worker after the project is
- * already created, the just-created project gets counted and the check
- * always fails. See projects.ts where the rate limit is now enforced
- * up front.
- */
-const DAILY_LIMIT_PER_ARTIFACT = 1;
-
 async function processLogo(job: Job<LogoJobData>) {
   const { projectId, prompt, referenceImageUrls } = job.data;
   const startedAt = Date.now();
@@ -128,9 +114,10 @@ async function processVideoStage(job: Job<VideoJobData>) {
   });
 
   const jobId = job.id;
-  // v38-compatible signature: provider calls record ProviderCall rows
-  // with projectId + jobId. The new code uses the real Veo 3.0 model
-  // IDs and the correct `:generateVideos` REST endpoint.
+  // v38-compatible signature; provider calls record ProviderCall rows
+  // with projectId + jobId. The new code uses the real Veo 3.1 model
+  // IDs and the correct `:predictLongRunning` REST endpoint with
+  // built-in 429 retry (3 attempts × 60s backoff).
   const { operationId, model } = await generateVideo({
     prompt,
     referenceImageUrls: referenceImageUrls ?? [],
@@ -143,9 +130,7 @@ async function processVideoStage(job: Job<VideoJobData>) {
   log("video", `submitted projectId=${projectId} operationId=${operationId} model=${model}`);
 
   // Persist the chosen model + operation id on GenerationJob.inputPayload
-  // so the admin portal / debug view shows what we actually called. We
-  // update the most-recent job row (not all rows for the project) to
-  // avoid clobbering earlier stages.
+  // so the admin portal / debug view shows what we actually called.
   await prisma.generationJob.updateMany({
     where: { projectId, status: { in: ["queued", "running"] } },
     data: {
@@ -171,8 +156,6 @@ async function processVideoStage(job: Job<VideoJobData>) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     attempts++;
     status = await pollVideoOperation(operationId, projectId, String(jobId));
-    // Heartbeat every 6 polls (30s) so an idle worker doesn't look frozen
-    // in the logs without spamming them on every single tick.
     if (attempts % 6 === 0) {
       log(
         "video",
@@ -187,15 +170,21 @@ async function processVideoStage(job: Job<VideoJobData>) {
   if (status.error) {
     throw new Error(status.error);
   }
-  if (!status.videoUrl) {
-    throw new Error("Video reported done but no video URL");
+  if (!status.videoBytesBase64 && !status.videoUri) {
+    throw new Error("Video reported done but no inline bytes or URI");
   }
 
-  // NEW: download the MP4 bytes from Google's file URI to disk. The
-  // raw URI is short-lived (~1h) and the Flutter client expects a
-  // stable URL on our own backend. downloadVideo() writes to
-  // uploads/<uuid>.mp4 and returns the persistent public URL.
-  const downloaded = await downloadVideo(status.videoUrl, projectId, String(jobId));
+  // Download / decode the video bytes and write to disk. downloadVideo
+  // handles both shapes (inline base64 and signed URI). The result is
+  // a stable public URL on our own backend that the Flutter <video>
+  // element and gallery-save paths can use.
+  const downloaded = await downloadVideo({
+    uri: status.videoUri,
+    bytesBase64: status.videoBytesBase64,
+    mimeType: status.videoMimeType,
+    projectId,
+    jobId: String(jobId),
+  });
   log(
     "video",
     `downloaded projectId=${projectId} bytes=${downloaded.byteLength} url=${downloaded.publicUrl}`,
