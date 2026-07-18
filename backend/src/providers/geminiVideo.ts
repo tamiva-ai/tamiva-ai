@@ -404,13 +404,23 @@ export async function pollVideoOperation(
   name?: string;
   done?: boolean;
 
-  response?: {
-    videos?: Array<{
-      uri?: string;
-      bytesBase64Encoded?: string;
-      mimeType?: string;
+response?: {
+  videos?: Array<{
+    uri?: string;
+    bytesBase64Encoded?: string;
+    mimeType?: string;
+  }>;
+
+  generateVideoResponse?: {
+    generatedSamples?: Array<{
+      video: {
+        uri?: string;
+        bytesBase64Encoded?: string;
+        mimeType?: string;
+      };
     }>;
   };
+};
 
   generateVideoResponse?: {
     generatedSamples?: Array<{
