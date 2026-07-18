@@ -422,16 +422,6 @@ response?: {
   };
 };
 
-  generateVideoResponse?: {
-    generatedSamples?: Array<{
-      video: {
-        uri?: string;
-        bytesBase64Encoded?: string;
-        mimeType?: string;
-      };
-    }>;
-  };
-
   error?: {
     message?: string;
     code?: number;
@@ -589,7 +579,16 @@ export async function downloadVideo(args: {
       await fs.mkdir(uploadsDir, { recursive: true });
       const filePath = path.join(uploadsDir, filename);
       await fs.writeFile(filePath, buf);
+console.log("================================");
+console.log("PUBLIC_BASE_URL =", process.env.PUBLIC_BASE_URL);
 
+const publicBase =
+  process.env.PUBLIC_BASE_URL ?? "http://localhost:4000";
+
+console.log("publicBase =", publicBase);
+console.log("================================");
+
+const publicUrl = `${publicBase.replace(/\/$/, "")}/uploads/${filename}`;
       const publicBase = process.env.PUBLIC_BASE_URL ?? "http://localhost:4000";
       const publicUrl = `${publicBase.replace(/\/$/, "")}/uploads/${filename}`;
 
