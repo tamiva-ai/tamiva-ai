@@ -276,15 +276,17 @@ console.log("==================================");
       signal: controller.signal,
     });
     const text = await res.text();
-    if (!res.ok) {
-      log(
-        "gemini",
-        `submit FAIL status=${res.status} body=${truncate(text, 500)} ms=${Date.now() - startedAt}`,
-      );
-      throw new Error(
-        `Gemini video generation failed: ${res.status} ${truncate(text, 300)}`,
-      );
-    }
+
+if (!res.ok) {
+  log(
+    "gemini",
+    `submit FAIL status=${res.status} FULL_BODY=${text} ms=${Date.now() - startedAt}`,
+  );
+
+  throw new Error(
+    `Gemini video generation failed: ${res.status} ${text}`
+  );
+}
 
     let data: { name?: string };
     try {
