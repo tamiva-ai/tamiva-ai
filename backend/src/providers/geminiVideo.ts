@@ -7,7 +7,7 @@
  *     veo-3.1-generate-preview, veo-3.1-lite-generate-preview listed
  *     with supportedGenerationMethods=["predictLongRunning"].
  *   - POST :predictLongRunning on veo-3.1-fast-generate-preview returns
- *     HTTP 200 with {"name":"operations/..."} when not throttled
+ *     HTTP 200 with {"name":"operations/..."} when not throttle
  *     (HTTP 429 with RESOURCE_EXHAUSTED when throttled).
  *
  * Earlier versions of this file used a fabricated :generateVideos
@@ -400,18 +400,33 @@ export async function pollVideoOperation(
           };
         }
 
-        let data: {
-          name?: string;
-          done?: boolean;
-          response?: {
-            videos?: Array<{
-              uri?: string;
-              bytesBase64Encoded?: string;
-              mimeType?: string;
-            }>;
-          };
-          error?: { message?: string; code?: number };
-        };
+   let data: {
+  name?: string;
+  done?: boolean;
+
+  response?: {
+    videos?: Array<{
+      uri?: string;
+      bytesBase64Encoded?: string;
+      mimeType?: string;
+    }>;
+  };
+
+  generateVideoResponse?: {
+    generatedSamples?: Array<{
+      video: {
+        uri?: string;
+        bytesBase64Encoded?: string;
+        mimeType?: string;
+      };
+    }>;
+  };
+
+  error?: {
+    message?: string;
+    code?: number;
+  };
+};
         try {
           data = JSON.parse(text);
         } catch {
@@ -433,7 +448,9 @@ export async function pollVideoOperation(
 
         // Success path: response.videos[0]. Either bytesBase64Encoded
         // (inline) or uri (download needed). Both are valid.
-        const video = data.response?.videos?.[0];
+        const video =
+  data.response?.videos?.[0] ??
+  data.generateVideoResponse?.generatedSamples?.[0]?.video;
         if (!video) {
           log(
             "gemini-poll",
