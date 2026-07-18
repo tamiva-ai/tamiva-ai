@@ -260,7 +260,16 @@ async function submitOnce(
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   log("gemini", `submit model=${model} promptLen=${req.prompt.length}`);
-
+  console.log("===== FINAL REQUEST =====");
+console.log("URL:", url);
+console.log("Method:", "POST");
+console.log("Headers:", {
+  "Content-Type": "application/json",
+  "x-goog-api-key": apiKey.substring(0, 8) + "...",
+});
+console.log("Body:");
+console.log(JSON.stringify(body, null, 2));
+console.log("=========================");
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -271,6 +280,15 @@ async function submitOnce(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+
+    console.log("===== RESPONSE =====");
+console.log("Status:", res.status);
+
+for (const [k, v] of res.headers.entries()) {
+  console.log(`${k}: ${v}`);
+}
+
+console.log("====================");
     const text = await res.text();
     if (!res.ok) {
       log(
