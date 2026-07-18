@@ -448,19 +448,26 @@ export async function pollVideoOperation(
 
         // Success path: response.videos[0]. Either bytesBase64Encoded
         // (inline) or uri (download needed). Both are valid.
-        const video =
+        console.log("===== POLL RESPONSE OBJECT =====");
+console.log(JSON.stringify(data, null, 2));
+console.log("================================");
+
+const video =
   data.response?.videos?.[0] ??
   data.generateVideoResponse?.generatedSamples?.[0]?.video;
-        if (!video) {
-          log(
-            "gemini-poll",
-            `done but no video in response op=${operationId} body=${truncate(JSON.stringify(data.response ?? {}), 300)}`,
-          );
-          return {
-            done: true,
-            error: "Gemini returned done=true but no video in response",
-          };
-        }
+
+console.log("VIDEO OBJECT =", video);
+
+if (!video) {
+  log(
+    "gemini-poll",
+    `done but no video in response op=${operationId} body=${truncate(JSON.stringify(data), 1000)}`,
+  );
+  return {
+    done: true,
+    error: "Gemini returned done=true but no video in response",
+  };
+}
 
         log(
           "gemini-poll",
