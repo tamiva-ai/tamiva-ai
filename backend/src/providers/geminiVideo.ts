@@ -126,6 +126,10 @@ function getApiKey(): string {
       "GEMINI_API_KEY is not configured. Set it in Railway -> Variables.",
     );
   }
+  console.log("========== GEMINI KEY DEBUG ==========");
+  console.log("Key prefix:", k.substring(0, 8));
+  console.log("Key length:", k.length);
+  console.log("======================================");
   return k;
 }
 
