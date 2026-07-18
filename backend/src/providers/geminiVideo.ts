@@ -454,7 +454,7 @@ console.log("================================");
 
 const video =
   data.response?.videos?.[0] ??
-  data.generateVideoResponse?.generatedSamples?.[0]?.video;
+  data.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
 
 console.log("VIDEO OBJECT =", video);
 
