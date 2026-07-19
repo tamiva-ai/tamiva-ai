@@ -6,54 +6,86 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-aab:
+  build:
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    defaults:
+      run:
+        shell: bash
 
-      - uses: subosito/flutter-action@v2
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version-file: .github/flutter-version
 
-      - name: Verify Flutter
+      - name: Verify environment
         run: |
+          echo "===== CURRENT DIRECTORY ====="
+          pwd
+          echo
+
+          echo "===== ROOT ====="
+          ls -la
+          echo
+
+          echo "===== flutter_app ====="
+          ls -la flutter_app || true
+          echo
+
+          echo "===== flutter_app/android ====="
+          ls -la flutter_app/android || true
+          echo
+
+          echo "===== Flutter ====="
           flutter --version
+          echo
+
+          echo "===== Java ====="
           java -version
 
-      - name: Install Flutter dependencies
+      - name: Clean project
+        working-directory: flutter_app
+        run: |
+          flutter clean
+          rm -rf .dart_tool
+          rm -rf build
+          rm -rf android/.gradle
+          rm -rf android/build
+          rm -rf android/app/build
+
+      - name: Get packages
         working-directory: flutter_app
         run: flutter pub get
-
-      - name: Decode keystore
-        working-directory: flutter_app/android
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > tamiva-upload.jks
-
-          cat > key.properties <<EOF
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyPassword=$ANDROID_KEY_PASSWORD
-          keyAlias=$ANDROID_KEY_ALIAS
-          storeFile=tamiva-upload.jks
-          EOF
 
       - name: Generate launcher icons
         working-directory: flutter_app
         run: dart run flutter_launcher_icons
 
-      - name: Build App Gradle (Full Stacktrace)
+      - name: Verify Gradle Wrapper
         working-directory: flutter_app/android
-    
+        run: |
+          pwd
+          ls -la
+          test -f gradlew
+          chmod +x gradlew
+          ./gradlew --version
+
+      - name: Build AAB with full Gradle stacktrace
+        working-directory: flutter_app/android
         run: |
           chmod +x gradlew
-          ./gradlew bundleRelease --stacktrace --info
+          ./gradlew bundleRelease \
+            --stacktrace \
+            --info \
+            --warning-mode all
+
       - name: Upload AAB
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-aab
-          path: flutter_app/build/app/outputs/bundle/release/app-release.aab
+          name: tamiva-app-release
+          path: flutter_app/build/app/outputs/bundle/release/*.aab
