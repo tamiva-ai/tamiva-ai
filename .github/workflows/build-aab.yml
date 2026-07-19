@@ -1,36 +1,14 @@
-# Build Android AAB (Play Store upload format).
-#
-# Adds a parallel job to the existing build-apk.yml workflow: this one
-# produces app-release.aab and uploads it as a separate GitHub Actions
-# artifact. The existing build-apk.yml still produces APK for sideload
-# / Firebase App Distribution.
-#
-# Triggers:
-#   - push to main (runs alongside the APK build)
-#   - manual dispatch (Actions tab -> Run workflow)
-#
-# Required secrets (Settings -> Secrets and variables -> Actions):
-#   ANDROID_KEYSTORE_BASE64  base64-encoded contents of tamiva-upload.jks
-#   ANDROID_KEYSTORE_PASSWORD storepass (from key.properties)
-#   ANDROID_KEY_ALIAS         tamiva-upload (the alias in your keystore)
-#   ANDROID_KEY_PASSWORD      keypass (from key.properties)
-#
-# The keystore is base64-encoded because GitHub Actions secrets cannot
-# accept binary file uploads. See scripts/encode-keystore.ps1 for the
-# encoding helper.
-
 name: Build Android AAB
 
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   build-aab:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+
     steps:
       - uses: actions/checkout@v4
 
@@ -38,46 +16,11 @@ jobs:
         with:
           flutter-version-file: .github/flutter-version
 
-      - name: Clean stale build artifacts
+      - name: Install Flutter dependencies
         working-directory: flutter_app
-        run: |
-          rm -rf .dart_tool build
-          rm -rf android/.gradle android/build android/app/build
+        run: flutter pub get
 
-      # Scaffold the android/ folder if missing. Idempotent — if your
-      # repo already has android/app/src/main/AndroidManifest.xml, this
-      # is a no-op and we skip the regeneration.
-      
-
-      # Validate the manifest produced by flutter create. Don't try to
-      # patch it with sed — escaping newlines inside an inline block
-      # is fragile and previous attempts broke the XML. If the manifest
-      # is missing required perms, edit the file in the repo and re-push;
-      # we don't mutate it here.
-      - name: Verify manifest is valid XML
-        working-directory: flutter_app
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          test -f "$MANIFEST" || (echo "::error::manifest missing"; exit 1)
-          python3 -c "import xml.etree.ElementTree as ET; ET.parse('$MANIFEST')" \
-            || (echo "::error::manifest is not valid XML"; exit 1)
-          echo "Manifest OK:"
-          grep -E 'uses-permission|<queries>' "$MANIFEST" || true
-
-      # Brand the launcher and the app label.
-      - name: Generate app icon
-        working-directory: flutter_app
-        run: dart run flutter_launcher_icons
-
-      - name: Set app display name to Tamiva
-        working-directory: flutter_app
-        run: |
-          sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
-
-      # Decode the keystore and write key.properties for Gradle to
-      # pick up. The CI never sees the password in plaintext logs
-      # because we redirect via env vars and the file is .gitignored.
-      - name: Decode keystore and write key.properties
+      - name: Decode keystore
         working-directory: flutter_app/android
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -85,83 +28,25 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          set -euo pipefail
-          # Decode the keystore to the path that key.properties points at
-          # (tamiva-upload.jks relative to flutter_app/android/, the cwd of
-          # this step). This way the file in your repo and the file on the
-          # runner agree, and a single key.properties works in both
-          # environments.
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > tamiva-upload.jks
-          echo "Keystore bytes: $(wc -c < tamiva-upload.jks)"
+
           cat > key.properties <<EOF
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyPassword=$ANDROID_KEY_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
           storeFile=tamiva-upload.jks
           EOF
-          chmod 600 key.properties tamiva-upload.jks
 
-      # Ensure key.properties is gitignored so it never gets committed.
-      - name: Ensure key.properties is gitignored
-        working-directory: flutter_app/android
-        run: |
-          if ! grep -q '^key\.properties$' .gitignore 2>/dev/null; then
-            printf '\nkey.properties\n' >> .gitignore
-          fi
-
-      # Wire signingConfigs.release + buildTypes.release in app/build.gradle.
-      # Idempotent — only patches if not already present.
-      - name: Wire release signing
-        working-directory: flutter_app/android
-        run: |
-          GRADLE=app/build.gradle.kts
-          if [ ! -f "$GRADLE" ]; then GRADLE=app/build.gradle; fi
-          if ! grep -q 'signingConfigs' "$GRADLE"; then
-            echo "::error::$GRADLE has no signingConfigs block. Add the snippet from AAB_BUILD_GUIDE.md Phase 4.2 manually."
-            exit 1
-          fi
-          if ! grep -q 'signingConfig' "$GRADLE"; then
-            echo "::error::signingConfigs block exists in $GRADLE but buildTypes.release is not pointing at it. See AAB_BUILD_GUIDE.md Phase 4.2."
-            exit 1
-          fi
-     - name: Show generated Gradle file
-       working-directory: flutter_app/android
-       run: |
-          if [ -f app/build.gradle.kts ]; then
-            echo "===== app/build.gradle.kts ====="
-            cat app/build.gradle.kts
-          elif [ -f app/build.gradle ]; then
-             echo "===== app/build.gradle ====="
-             cat app/build.gradle
-          else
-             echo "No Gradle file found!"
-             exit 1
-          fi
-      - name: Install Flutter dependencies
+      - name: Generate launcher icons
         working-directory: flutter_app
-        run: flutter pub get
+        run: dart run flutter_launcher_icons
 
-      # Build the AAB. Produces build/app/outputs/bundle/release/app-release.aab.
-      - name: Build AAB
+      - name: Build App Bundle
         working-directory: flutter_app
         run: flutter build appbundle --release
 
-      # Upload the AAB as a downloadable artifact. The artifact name
-      # includes the commit SHA so you can correlate with a specific push.
-      - name: Upload AAB artifact
+      - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
-          name: tamiva-app-release-aab-${{ github.sha }}
+          name: app-release-aab
           path: flutter_app/build/app/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
-          retention-days: 90
-
-      # Convenience summary. Lets you see at a glance which SHA the
-      # artifact came from and the version code baked into the AAB.
-      - name: Summarize
-        run: |
-          echo "## AAB build summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Trigger: \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Workflow: \`${{ github.workflow }}\`" >> $GITHUB_STEP_SUMMARY
-          ls -la flutter_app/build/app/outputs/bundle/release/app-release.aab >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
