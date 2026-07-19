@@ -1,4 +1,4 @@
-package com.example.tamiva_app
+package com.tamiva.app
 
 import io.flutter.embedding.android.FlutterActivity
 
