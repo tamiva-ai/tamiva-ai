@@ -22,7 +22,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -30,22 +30,39 @@ jobs:
           flutter-version-file: .github/flutter-version
           cache: true
 
-      - name: Verify Flutter
+      - name: Flutter Version
         run: flutter --version
 
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Verify Gradle Wrapper
+      - name: Show Android Files
         working-directory: flutter_app/android
         run: |
+          pwd
           ls -la
-          chmod +x gradlew
+          ls -la gradle/wrapper
 
-      - name: Build App Bundle (AAB)
-        run: flutter build appbundle --release
+      - name: Build with Gradle (Debug)
+        working-directory: flutter_app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew clean
+          ./gradlew bundleRelease --stacktrace --info
+
+      - name: Upload Gradle Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-logs
+          path: |
+            flutter_app/android/**/*.log
+            flutter_app/android/build/reports/**
+            flutter_app/build/reports/**
+          if-no-files-found: ignore
 
       - name: Upload AAB
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: tamiva-release-aab
