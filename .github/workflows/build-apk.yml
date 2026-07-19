@@ -3,11 +3,12 @@ name: Build Android APK
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -15,26 +16,16 @@ jobs:
         with:
           flutter-version-file: .github/flutter-version
 
+      - name: Verify environment
+        run: |
+          flutter --version
+          java -version
+
       - name: Clean stale build artifacts
         working-directory: flutter_app
         run: |
           rm -rf .dart_tool build
           rm -rf android/.gradle android/build android/app/build
-
-
-      - name: Ensure INTERNET permission and browser queries
-        working-directory: flutter_app
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
-            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
-          fi
-          if ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$MANIFEST"; then
-            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>' "$MANIFEST"
-          fi
-          if ! grep -q "<queries>" "$MANIFEST"; then
-            sed -i '/<\/manifest>/i\    <queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="https" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="http" />\n        </intent>\n    </queries>' "$MANIFEST"
-          fi
 
       - name: Install dependencies
         working-directory: flutter_app
@@ -44,18 +35,14 @@ jobs:
         working-directory: flutter_app
         run: dart run flutter_launcher_icons
 
-      - name: Set app display name to Tamiva
-        working-directory: flutter_app
-        run: |
-          sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
-
-      - name: Build APK (Debug gradle)
+      - name: Build with Gradle (Full Stacktrace)
         working-directory: flutter_app/android
-        run: flutter build apk --release run: |
+        run: |
           chmod +x gradlew
           ./gradlew assembleRelease --stacktrace --info
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: tamiva-app-release
