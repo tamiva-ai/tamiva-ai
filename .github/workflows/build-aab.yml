@@ -42,10 +42,8 @@ jobs:
         run: dart run flutter_launcher_icons
 
       - name: Build App bundle (AAB)
-        working-directory: flutter_app/android
-        run: |
-         flutter pub get
-         ./gradlew bundleRelease --stacktrace --info
+        working-directory: flutter_app
+        run: flutter build appbundle --release
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
