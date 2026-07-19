@@ -47,14 +47,7 @@ jobs:
       # Scaffold the android/ folder if missing. Idempotent — if your
       # repo already has android/app/src/main/AndroidManifest.xml, this
       # is a no-op and we skip the regeneration.
-      - name: Scaffold native Android project (only on first run)
-        working-directory: flutter_app
-        run: |
-          if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
-            flutter create . --platforms=android --org com.tamiva
-          else
-            echo "android/app/src/main/AndroidManifest.xml already present - skipping flutter create."
-          fi
+      
 
       # Validate the manifest produced by flutter create. Don't try to
       # patch it with sed — escaping newlines inside an inline block

@@ -21,14 +21,6 @@ jobs:
           rm -rf .dart_tool build
           rm -rf android/.gradle android/build android/app/build
 
-      - name: Scaffold native Android project (only on first run)
-        working-directory: flutter_app
-        run: |
-          if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
-            flutter create . --platforms=android --org com.tamiva
-          else
-            echo "android/app/src/main/AndroidManifest.xml already present - skipping flutter create to avoid overwriting lib/."
-          fi
 
       - name: Ensure INTERNET permission and browser queries
         working-directory: flutter_app
