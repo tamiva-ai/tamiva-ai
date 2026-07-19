@@ -10,19 +10,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show repository
+      - name: Show Repository Structure
         run: |
           echo "PWD"
           pwd
 
           echo
-          echo "FILES"
+          echo "Workspace"
+          echo "$GITHUB_WORKSPACE"
+
+          echo
+          echo "Repository"
           find .
 
           echo
-          echo "GRADLE"
+          echo "Gradle Wrappers"
           find . -name gradlew
 
           echo
-          echo "ANDROID"
+          echo "Flutter Android"
           ls -la flutter_app/android || true
