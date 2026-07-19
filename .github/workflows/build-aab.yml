@@ -124,7 +124,7 @@ jobs:
             echo "::error::signingConfigs block exists in $GRADLE but buildTypes.release is not pointing at it. See AAB_BUILD_GUIDE.md Phase 4.2."
             exit 1
           fi
-        - name: Show generated Gradle file
+     - name: Show generated Gradle file
           working-directory: flutter_app/android
           run: |
             if [ -f app/build.gradle.kts ]; then
