@@ -1,114 +1,37 @@
-name: Build Android AAB
+name: Debug Build Android AAB
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
-  build:
+  debug:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        shell: bash
-
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show commit and repository
-        run: |
-          echo "========== GIT =========="
-          git rev-parse HEAD
-          git log --oneline -5
-
-          echo
-          echo "========== CURRENT DIRECTORY =========="
-          pwd
-
-          echo
-          echo "========== ROOT =========="
-          ls -la
-
-          echo
-          echo "========== WORKFLOWS =========="
-          ls -la .github/workflows
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version-file: .github/flutter-version
-
-      - name: Flutter Version
-        run: flutter --version
-
-      - name: Java Version
-        run: java -version
-
-      - name: Verify Project Structure
-        run: |
-          echo "========== flutter_app =========="
-          ls -la flutter_app
-
-          echo
-          echo "========== flutter_app/android =========="
-          ls -la flutter_app/android
-
-          echo
-          echo "========== gradlew =========="
-          find . -name gradlew
-
-      - name: Clean Flutter Project
-        working-directory: flutter_app
-        run: |
-          flutter clean
-          rm -rf .dart_tool
-          rm -rf build
-          rm -rf android/.gradle
-          rm -rf android/build
-          rm -rf android/app/build
-
-      - name: Get Flutter Packages
-        working-directory: flutter_app
-        run: flutter pub get
-
-      - name: Generate Launcher Icons
-        working-directory: flutter_app
-        run: dart run flutter_launcher_icons
-
-      - name: Verify Gradle Wrapper
-        working-directory: flutter_app/android
+      - name: Show repository tree
         run: |
           echo "PWD:"
           pwd
-
           echo
-          echo "FILES:"
+          echo "Repository root:"
           ls -la
+          echo
+          echo "Recursive .github:"
+          ls -R .github || true
+          echo
+          echo "Recursive flutter_app:"
+          ls -R flutter_app || true
+          echo
+          echo "Find gradlew:"
+          find . -name gradlew
 
-          if [ ! -f gradlew ]; then
-            echo "ERROR: gradlew not found"
-            exit 1
-          fi
-
-          chmod +x gradlew
-
-          ./gradlew --version
-
-      - name: Build Android App Bundle
-        working-directory: flutter_app/android
+      - name: Verify android directory
         run: |
+          cd flutter_app/android
+          pwd
+          ls -la
           chmod +x gradlew
-          ./gradlew bundleRelease \
-            --stacktrace \
-            --info \
-            --warning-mode all
-
-      - name: Upload AAB
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tamiva-app-release
-          path: flutter_app/build/app/outputs/bundle/release/*.aab
+          ./gradlew --version
