@@ -125,18 +125,18 @@ jobs:
             exit 1
           fi
      - name: Show generated Gradle file
-          working-directory: flutter_app/android
-          run: |
-            if [ -f app/build.gradle.kts ]; then
-              echo "===== app/build.gradle.kts ====="
-              cat app/build.gradle.kts
-            elif [ -f app/build.gradle ]; then
-              echo "===== app/build.gradle ====="
-              cat app/build.gradle
-            else
-              echo "No Gradle file found!"
-              exit 1
-            fi
+       working-directory: flutter_app/android
+       run: |
+          if [ -f app/build.gradle.kts ]; then
+            echo "===== app/build.gradle.kts ====="
+            cat app/build.gradle.kts
+          elif [ -f app/build.gradle ]; then
+             echo "===== app/build.gradle ====="
+             cat app/build.gradle
+          else
+             echo "No Gradle file found!"
+             exit 1
+          fi
       - name: Install Flutter dependencies
         working-directory: flutter_app
         run: flutter pub get
