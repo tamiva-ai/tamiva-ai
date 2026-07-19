@@ -56,36 +56,20 @@ jobs:
             echo "android/app/src/main/AndroidManifest.xml already present - skipping flutter create."
           fi
 
-      # Patch the manifest with the permissions Tamiva actually needs.
-      # Idempotent: skips lines that are already present.
-      - name: Ensure permissions and queries
+      # Validate the manifest produced by flutter create. Don't try to
+      # patch it with sed — escaping newlines inside an inline block
+      # is fragile and previous attempts broke the XML. If the manifest
+      # is missing required perms, edit the file in the repo and re-push;
+      # we don't mutate it here.
+      - name: Verify manifest is valid XML
         working-directory: flutter_app
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          for perm in "android.permission.INTERNET" \
-                      "android.permission.ACCESS_NETWORK_STATE" \
-                      "android.permission.CAMERA" \
-                      "android.permission.READ_EXTERNAL_STORAGE:maxSdkVersion=32" \
-                      "android.permission.WRITE_EXTERNAL_STORAGE:maxSdkVersion=28" \
-                      "android.permission.READ_MEDIA_IMAGES" \
-                      "android.permission.READ_MEDIA_VIDEO" \
-                      "android.permission.POST_NOTIFICATIONS"; do
-            KEY="${perm%%:*}"
-            TAIL="${perm#*:}"
-            if [ "$KEY" = "$perm" ]; then
-              NEEDLE="$KEY"
-              INSERT="    <uses-permission android:name=\"$KEY\"/>"
-            else
-              NEEDLE="$KEY\" android:$TAIL"
-              INSERT="    <uses-permission android:name=\"$KEY\" android:$TAIL/>"
-            fi
-            if ! grep -q "$NEEDLE" "$MANIFEST"; then
-              sed -i "/<manifest /a\\$INSERT" "$MANIFEST"
-            fi
-          done
-          if ! grep -q "<queries>" "$MANIFEST"; then
-            sed -i '/<\/manifest>/i\    <queries>\n        <intent>\n            <action android:name="android.intent.action.PROCESS_TEXT" />\n            <data android:mimeType="text/plain" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="https" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="http" />\n        </intent>\n    </queries>' "$MANIFEST"
-          fi
+          test -f "$MANIFEST" || (echo "::error::manifest missing"; exit 1)
+          python3 -c "import xml.etree.ElementTree as ET; ET.parse('$MANIFEST')" \
+            || (echo "::error::manifest is not valid XML"; exit 1)
+          echo "Manifest OK:"
+          grep -E 'uses-permission|<queries>' "$MANIFEST" || true
 
       # Brand the launcher and the app label.
       - name: Generate app icon
