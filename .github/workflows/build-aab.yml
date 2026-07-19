@@ -1,37 +1,53 @@
-name: Debug Build Android AAB
+name: Build AAB
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  debug:
+  build:
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: flutter_app
+
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Show repository tree
-        run: |
-          echo "PWD:"
-          pwd
-          echo
-          echo "Repository root:"
-          ls -la
-          echo
-          echo "Recursive .github:"
-          ls -R .github || true
-          echo
-          echo "Recursive flutter_app:"
-          ls -R flutter_app || true
-          echo
-          echo "Find gradlew:"
-          find . -name gradlew
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      - name: Verify android directory
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: .github/flutter-version
+          cache: true
+
+      - name: Verify Flutter
+        run: flutter --version
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Verify Gradle Wrapper
+        working-directory: flutter_app/android
         run: |
-          cd flutter_app/android
-          pwd
           ls -la
           chmod +x gradlew
-          ./gradlew --version
+
+      - name: Build App Bundle (AAB)
+        run: flutter build appbundle --release
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamiva-release-aab
+          path: flutter_app/build/app/outputs/bundle/release/*.aab
+          if-no-files-found: error
