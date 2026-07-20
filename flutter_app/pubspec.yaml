@@ -1,7 +1,7 @@
 name: tamiva_app
 description: Tamiva self-serve brand asset generator (logo, video, carousel).
 publish_to: "none"
-version: 0.1.0+2
+version: 0.2.0
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
