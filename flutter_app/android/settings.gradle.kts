@@ -19,7 +19,10 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "8.7.3" apply false
+    // Bumped from 8.7.3 -> 8.9.1 to satisfy AndroidX libs pulled by Flutter plugins
+    // (url_launcher_android 6.3.x -> navigationevent-android 1.0.2,
+    //  image_picker_android -> browser 1.9.0 / activity 1.12.4 / core 1.18.0).
+    id("com.android.application") version "8.9.1" apply false
     id("org.jetbrains.kotlin.android") version "2.1.21" apply false
 }
 
