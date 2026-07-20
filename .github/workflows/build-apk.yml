@@ -49,11 +49,27 @@ jobs:
         run: |
           sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
 
-      - name: Build with Gradle (Full Stacktrace)
+      # Quiet Gradle: no --info, no --stacktrace. Capture the full log to a
+      # file (uploaded as artifact) and only echo the failure tail to the live
+      # console so the actual cause is visible without scrolling through
+      # hundreds of pages of worker frames.
+      - name: Build with Gradle
         working-directory: flutter_app/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace --info
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --console=plain \
+            --warning-mode=summary \
+            2>&1 | tee gradle-build.log
+          status=${PIPESTATUS[0]}
+          echo "::notice::Gradle exit status: $status"
+          if [ "$status" -ne 0 ]; then
+            echo "===== FAILURE TAIL (last 200 lines of gradle-build.log) ====="
+            tail -n 200 gradle-build.log
+            echo "===== END FAILURE TAIL ====="
+          fi
+          exit "$status"
 
       - name: Upload APK
         if: success()
@@ -61,3 +77,11 @@ jobs:
         with:
           name: tamiva-app-release
           path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload Gradle Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: flutter_app/android/gradle-build.log
+          if-no-files-found: ignore

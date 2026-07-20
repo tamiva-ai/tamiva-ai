@@ -43,23 +43,27 @@ jobs:
           ls -la
           ls -la gradle/wrapper
 
-      - name: Build with Gradle (Debug)
+      # Capture the full Gradle log to a file so it's available as an artifact,
+      # but keep the live console output quiet. On failure we still print the
+      # last ~200 lines so the cause is visible without paging through
+      # thousands of worker frames.
+      - name: Build with Gradle
         working-directory: flutter_app/android
         run: |
           chmod +x gradlew
-          ./gradlew clean
-          ./gradlew bundleRelease --stacktrace --info
-
-      - name: Upload Gradle Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-logs
-          path: |
-            flutter_app/android/**/*.log
-            flutter_app/android/build/reports/**
-            flutter_app/build/reports/**
-          if-no-files-found: ignore
+          ./gradlew clean bundleRelease \
+            --no-daemon \
+            --console=plain \
+            --warning-mode=summary \
+            2>&1 | tee gradle-build.log
+          status=${PIPESTATUS[0]}
+          echo "::notice::Gradle exit status: $status"
+          if [ "$status" -ne 0 ]; then
+            echo "===== FAILURE TAIL (last 200 lines of gradle-build.log) ====="
+            tail -n 200 gradle-build.log
+            echo "===== END FAILURE TAIL ====="
+          fi
+          exit "$status"
 
       - name: Upload AAB
         if: success()
@@ -68,3 +72,11 @@ jobs:
           name: tamiva-release-aab
           path: flutter_app/build/app/outputs/bundle/release/*.aab
           if-no-files-found: error
+
+      - name: Upload Gradle Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: flutter_app/android/gradle-build.log
+          if-no-files-found: ignore
