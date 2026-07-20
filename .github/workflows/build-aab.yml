@@ -24,6 +24,22 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Provision a known-good Android SDK + NDK + CMake. The preinstalled SDK
+      # on ubuntu-latest runners is missing ninja under cmake/3.22.1, which
+      # causes :jni:externalNativeBuildCleanRelease (and any other native
+      # build task) to fail with "A problem occurred starting process
+      # 'command '/usr/local/lib/android/sdk/cmake/3.22.1/bin/ninja''".
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "11076708"
+          packages: |
+            platform-tools
+            platforms-android-35
+            build-tools;35.0.0
+            ndk;27.0.12077973
+            cmake;3.22.1
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -43,15 +59,14 @@ jobs:
           ls -la
           ls -la gradle/wrapper
 
-      # Capture the full Gradle log to a file so it's available as an artifact,
-      # but keep the live console output quiet. On failure we still print the
-      # last ~200 lines so the cause is visible without paging through
-      # thousands of worker frames.
+      # No `clean` step - bundleRelease overwrites outputs and the fresh-clean
+      # task can fail before AGP has a chance to download/provision the SDK
+      # tools it needs.
       - name: Build with Gradle
         working-directory: flutter_app/android
         run: |
           chmod +x gradlew
-          ./gradlew clean bundleRelease \
+          ./gradlew bundleRelease \
             --no-daemon \
             --console=plain \
             --warning-mode=summary \
