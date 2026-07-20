@@ -30,7 +30,7 @@ android {
 
     defaultConfig {
         applicationId = "com.tamiva.app"
-        minSdk = flutter.minSdkVersion
+        minSdk = 21
         targetSdk = flutter.targetSdkVersion
         versionCode = 2
         versionName = "0.2.0"
