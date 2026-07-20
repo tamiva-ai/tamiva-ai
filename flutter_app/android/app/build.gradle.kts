@@ -41,7 +41,10 @@ android {
             if (keystorePropertiesFile.exists()) {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = file(keystoreProperties["storeFile"] as String)
+                // Resolve relative to the *root* Android project (flutter_app/android/)
+                // rather than this :app subproject, because key.properties lives at
+                // the root and so does tamiva-upload.jks.
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
             }
         }
@@ -54,12 +57,11 @@ android {
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
 
-            // IMPORTANT: Do NOT set `isShrinkResources` here.
-            // On AGP 8.7.x, simply mentioning `isShrinkResources = ...`
-            // forces AGP to evaluate the resource-shrinker path, which then
-            // requires `isMinifyEnabled = true` and trips the error:
-            //   "Removing unused resources requires unused code shrinking to be turned on."
-            // Leaving it unset keeps resource shrinking disabled.
+            // Do NOT set isShrinkResources or isMinifyEnabled here.
+            // AGP 8.9.x treats any mention of isShrinkResources as enabling the
+            // resource-shrinking code path, which then requires isMinifyEnabled=true
+            // and trips the "Removing unused resources requires unused code
+            // shrinking to be turned on" error during configuration.
 
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
