@@ -54,8 +54,12 @@ android {
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
 
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // IMPORTANT: Do NOT set `isShrinkResources` here.
+            // On AGP 8.7.x, simply mentioning `isShrinkResources = ...`
+            // forces AGP to evaluate the resource-shrinker path, which then
+            // requires `isMinifyEnabled = true` and trips the error:
+            //   "Removing unused resources requires unused code shrinking to be turned on."
+            // Leaving it unset keeps resource shrinking disabled.
 
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
