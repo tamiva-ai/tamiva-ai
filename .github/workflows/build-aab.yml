@@ -72,23 +72,11 @@ jobs:
           echo "version_code=${version_code}" >> "$GITHUB_ENV"
           echo "Computed next version: tag=${tag} version_name=${version_name} version_code=${version_code}"
 
-      # Defensive: bail out if this tag was created by another run while
-      # we were preparing. Without this, two concurrent runs could each
-      # compute the same "next" version and one would silently overwrite
-      # the other's AAB on Play Console.
-      - name: Check Tag is Available
-        run: |
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "::error::Tag ${TAG} already exists locally. Another build probably raced this one."
-            echo "::error::Re-run after bumping the tag manually, or delete the conflicting tag."
-            exit 1
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "::error::Tag ${TAG} already exists on origin. Another build probably raced this one."
-            exit 1
-          fi
-        env:
-          TAG: ${{ env.tag }}
+      # Note: tag collision handling lives in "Push Version Tag" below.
+      # We deliberately do NOT pre-flight check the tag here — two
+      # parallel runs starting from the same seed tag will both see
+      # "available" until one of them pushes, which makes a pre-flight
+      # check useless. The push step now retries with the next version.
 
       - name: Get Dependencies
         run: flutter pub get
@@ -137,12 +125,60 @@ jobs:
         # Tag this commit with vN.M.K so future builds can derive their
         # version from it. Uses the workflow's GITHUB_TOKEN, which has
         # permission to push tags to the same repo.
+        #
+        # Race handling: if a parallel run already pushed this tag while
+        # we were building, re-fetch tags and re-run next-version.sh to
+        # find the next free tag, then push that. Up to 5 attempts before
+        # giving up (which would mean CI is overwhelmed).
+        #
+        # This is also why we don't pre-flight check the tag — see the
+        # note above the deleted Check Tag is Available step.
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Build ${TAG}: versionName=${VERSION_NAME} versionCode=${VERSION_CODE}"
-          git push origin "${TAG}"
+
+          ATTEMPT=0
+          MAX_ATTEMPTS=5
+          CURRENT_TAG="${TAG}"
+          CURRENT_NAME="${VERSION_NAME}"
+          CURRENT_CODE="${VERSION_CODE}"
+
+          while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT: trying to push tag $CURRENT_TAG"
+
+            # Re-fetch tags so we see anything pushed by parallel runs
+            # since our initial checkout. Without this we'd cache an
+            # outdated view of origin and miss the collision.
+            git fetch --tags --force --prune origin >/dev/null 2>&1 || true
+
+            # Try to create and push. Suppress only the "already exists"
+            # stderr so the real cause of other failures isn't buried.
+            git tag -a "${CURRENT_TAG}" \
+                    -m "Build ${CURRENT_TAG}: versionName=${CURRENT_NAME} versionCode=${CURRENT_CODE}" 2>&1 \
+              | grep -v "already exists" || true
+
+            if git push origin "${CURRENT_TAG}" 2>&1 | tee push.log | grep -q "rejected\|already exists"; then
+              echo "::warning::Tag $CURRENT_TAG already exists on origin. Computing the next version."
+              rm -f push.log
+              eval "$(./.github/scripts/next-version.sh)"
+              CURRENT_TAG="${tag}"
+              CURRENT_NAME="${version_name}"
+              CURRENT_CODE="${version_code}"
+              echo "  retried with tag=$CURRENT_TAG version_name=$CURRENT_NAME version_code=$CURRENT_CODE"
+              continue
+            fi
+
+            rm -f push.log
+            echo "::notice::Pushed tag $CURRENT_TAG (versionName=$CURRENT_NAME versionCode=$CURRENT_CODE)"
+            break
+          done
+
+          if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+            echo "::error::Hit $MAX_ATTEMPTS tag-push attempts. CI may be overwhelmed; check Actions for concurrent runs."
+            exit 1
+          fi
         env:
           TAG: ${{ env.tag }}
           VERSION_NAME: ${{ env.version_name }}
