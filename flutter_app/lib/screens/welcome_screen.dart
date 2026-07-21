@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io' show SocketException, HttpException;
 
 import 'package:flutter/material.dart';
@@ -255,15 +256,33 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     try {
       user = await _callSignup();
     } on ApiException catch (e) {
-      // Route the dedicated "Account already exists" dialog if the body
-      // text suggests a duplicate, regardless of the HTTP status code.
-      // Backend sometimes returns 409, sometimes 400 with a body that
-      // still contains "already has a studio" / "already registered" —
-      // either way the user needs the dialog, not the inline error.
-      if (mounted && _looksLikeAlreadyRegistered(_extractApiMessage(e) ?? e.body)) {
+      // TEMP: diagnostic logging — strip once signup dialog is confirmed working.
+      // developer.log works in release builds too, so logcat will show it
+      // even when running the optimized AAB.
+      developer.log('[SIGNUP_DEBUG] statusCode=${e.statusCode}', name: 'tamiva.signup');
+      developer.log('[SIGNUP_DEBUG] body=${e.body}', name: 'tamiva.signup');
+      developer.log('[SIGNUP_DEBUG] extractedMessage=${_extractApiMessage(e)}', name: 'tamiva.signup');
+      developer.log('[SIGNUP_DEBUG] looksAlreadyRegistered(extracted)=${_looksLikeAlreadyRegistered(_extractApiMessage(e) ?? "")}', name: 'tamiva.signup');
+      developer.log('[SIGNUP_DEBUG] looksAlreadyRegistered(rawBody)=${_looksLikeAlreadyRegistered(e.body)}', name: 'tamiva.signup');
+      developer.log('[SIGNUP_DEBUG] mounted=$mounted', name: 'tamiva.signup');
+
+      // Route the dedicated "Account already exists" dialog whenever
+      // either:
+      //   a) the JSON-extracted message contains "already..." copy, OR
+      //   b) the raw response body contains those substrings.
+      //
+      // Belt-and-braces because (a) is the structured path and (b)
+      // catches any case where the backend's response shape changed
+      // and `_extractApiMessage` can't parse it (older 4xx wrappers,
+      // unexpected field names, etc).
+      if (mounted &&
+          (_looksLikeAlreadyRegistered(_extractApiMessage(e) ?? '') ||
+              _looksLikeAlreadyRegistered(e.body))) {
+        developer.log('[SIGNUP_DEBUG] routing to dialog', name: 'tamiva.signup');
         await _showAlreadyRegisteredDialog(e.body);
         return;
       }
+      developer.log('[SIGNUP_DEBUG] NOT routing to dialog — rethrowing', name: 'tamiva.signup');
       rethrow;
     }
     if (!mounted) return;
