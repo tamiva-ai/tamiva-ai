@@ -98,6 +98,69 @@ businessRouter.get("/:id/projects", async (req, res) => {
 });
 
 /**
+ * GET /business-profiles/:id/projects/all
+ *
+ * Returns the FULL project history for a business profile as a flat
+ * array, sorted newest first. Used by the Flutter client's "Artifacts"
+ * screen, which surfaces every generation (any status — ready, in-progress,
+ * failed) so users can re-tap ready ones and retry failed ones.
+ *
+ * Response shape:
+ *   { projects: [ { id, type, status, ..., firstAssetUrlSample, jobs[] }, ... ] }
+ *
+ * `firstAssetUrlSample` is the URL of the first asset (if any) — used by
+ * the grid as the tile thumbnail so the user can visually distinguish
+ * their generations without opening each one.
+ */
+businessRouter.get("/:id/projects/all", async (req, res) => {
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: req.params.id },
+    select: { id: true },
+  });
+  if (!profile) return res.status(404).json({ error: "Business profile not found" });
+
+  const projects = await prisma.project.findMany({
+    where: { businessProfileId: req.params.id },
+    include: {
+      assets: { orderBy: { slideIndex: "asc" } },
+      jobs: { orderBy: { startedAt: "asc" } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Shape each project for the client. Includes a `firstAssetUrlSample`
+  // (first asset URL — works for logo_variant, carousel_slide, video_final)
+  // and `assetCount` so the grid can show "X ready · Y failed".
+  const shaped = projects.map((p) => {
+    const firstAsset = p.assets[0];
+    const readyCount = p.assets.length;
+    const failedCount = p.jobs.filter((j) => j.status === "failed").length;
+    return {
+      id: p.id,
+      type: p.type,
+      status: p.status,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+      assetCount: readyCount,
+      firstAssetUrlSample: firstAsset?.url ?? null,
+      // Coarse duration: ms between first job start and last job update.
+      // Best-effort; 0 when jobs are missing timestamps (rare).
+      durationSeconds: 0,
+      jobs: p.jobs.map((j) => ({
+        stage: j.stage,
+        provider: j.provider,
+        status: j.status,
+        error: j.error,
+      })),
+      // Convenience flags for the grid subtitle copy.
+      _failedCount: failedCount,
+    };
+  });
+
+  res.json({ projects: shaped });
+});
+
+/**
  * GET /business-profiles/by-user/:userId
  *
  * Returns the user's primary business profile. 404 if none exists.
