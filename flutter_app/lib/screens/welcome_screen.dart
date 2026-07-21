@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 import 'dart:io' show SocketException, HttpException;
 
 import 'package:flutter/material.dart';
@@ -52,6 +51,15 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   bool _submitting = false;
   bool _signUpMode = false;
   UserFacingError? _error;
+
+  // TEMP: in-app diagnostic panel — removed once signup dialog is confirmed
+  // working. Visible only when this string is non-empty. Replaces ADB /
+  // logcat dependence for one-click debugging from the device.
+  String _diagStatus = '';
+  String _diagBody = '';
+  String _diagExtracted = '';
+  String _diagMatches = '';
+  String _diagAction = '';
 
   // v36 / S3.18 — stable per-submit idempotency key.
   String? _signupIdempotencyKey;
@@ -256,15 +264,25 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     try {
       user = await _callSignup();
     } on ApiException catch (e) {
-      // TEMP: diagnostic logging — strip once signup dialog is confirmed working.
-      // developer.log works in release builds too, so logcat will show it
-      // even when running the optimized AAB.
-      developer.log('[SIGNUP_DEBUG] statusCode=${e.statusCode}', name: 'tamiva.signup');
-      developer.log('[SIGNUP_DEBUG] body=${e.body}', name: 'tamiva.signup');
-      developer.log('[SIGNUP_DEBUG] extractedMessage=${_extractApiMessage(e)}', name: 'tamiva.signup');
-      developer.log('[SIGNUP_DEBUG] looksAlreadyRegistered(extracted)=${_looksLikeAlreadyRegistered(_extractApiMessage(e) ?? "")}', name: 'tamiva.signup');
-      developer.log('[SIGNUP_DEBUG] looksAlreadyRegistered(rawBody)=${_looksLikeAlreadyRegistered(e.body)}', name: 'tamiva.signup');
-      developer.log('[SIGNUP_DEBUG] mounted=$mounted', name: 'tamiva.signup');
+      // TEMP: in-app diagnostic panel so the failure is visible without
+      // adb/logcat. Captures status code, body, extracted message,
+      // matcher results, and which branch was taken. Stripped once the
+      // signup dialog is confirmed working.
+      final extracted = _extractApiMessage(e);
+      final matchesExtracted = _looksLikeAlreadyRegistered(extracted ?? '');
+      final matchesRaw = _looksLikeAlreadyRegistered(e.body);
+      if (mounted) {
+        setState(() {
+          _diagStatus = 'statusCode=${e.statusCode}';
+          _diagBody = e.body;
+          _diagExtracted = extracted ?? '(null)';
+          _diagMatches =
+              'extracted=$matchesExtracted, rawBody=$matchesRaw, mounted=$mounted';
+          _diagAction = (mounted && (matchesExtracted || matchesRaw))
+              ? 'routing to dialog'
+              : 'NOT routing to dialog — rethrowing';
+        });
+      }
 
       // Route the dedicated "Account already exists" dialog whenever
       // either:
@@ -275,14 +293,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       // catches any case where the backend's response shape changed
       // and `_extractApiMessage` can't parse it (older 4xx wrappers,
       // unexpected field names, etc).
-      if (mounted &&
-          (_looksLikeAlreadyRegistered(_extractApiMessage(e) ?? '') ||
-              _looksLikeAlreadyRegistered(e.body))) {
-        developer.log('[SIGNUP_DEBUG] routing to dialog', name: 'tamiva.signup');
+      if (mounted && (matchesExtracted || matchesRaw)) {
         await _showAlreadyRegisteredDialog(e.body);
         return;
       }
-      developer.log('[SIGNUP_DEBUG] NOT routing to dialog — rethrowing', name: 'tamiva.signup');
       rethrow;
     }
     if (!mounted) return;
@@ -555,6 +569,47 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                           onPressed: _submitting ? null : _submit,
                           child: Text(_signUpMode ? 'Start free  →' : 'Sign in  →'),
                         ),
+                        // TEMP: in-app diagnostic panel. Shows backend response
+                        // info after a failed signup so we can debug without
+                        // adb/logcat. Stripped once signup dialog is
+                        // confirmed working.
+                        if (_diagStatus.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0x22FFFFFF),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0x55FFFFFF)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('DIAG (temporary — screenshot this and send)',
+                                    style: TextStyle(
+                                      color: Color(0xFFFFAA33),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    )),
+                                const SizedBox(height: 6),
+                                SelectableText('status: $_diagStatus',
+                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
+                                const SizedBox(height: 2),
+                                SelectableText('body: $_diagBody',
+                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
+                                const SizedBox(height: 2),
+                                SelectableText('extracted: $_diagExtracted',
+                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
+                                const SizedBox(height: 2),
+                                SelectableText('matches: $_diagMatches',
+                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
+                                const SizedBox(height: 2),
+                                SelectableText('action: $_diagAction',
+                                    style: const TextStyle(color: Color(0xFFFFFFFF), fontSize: 11, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (!_signUpMode) ...[
                           const SizedBox(height: 8),
                           Center(
