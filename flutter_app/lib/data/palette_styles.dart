@@ -129,8 +129,14 @@ class PaletteStyles {
     muted, highContrast, luxeGold,
   ];
 
-  static PaletteStyle byKey(String key) =>
-      all.firstWhere((p) => p.key == key, orElse: () => warm);
+  /// Look up a palette by its [key]. Tolerates legacy displayName strings
+  /// (e.g. "Warm (maroon + ember + gold)") so older saved BusinessProfiles
+  /// load cleanly before the user re-picks.
+  static PaletteStyle byKey(String keyOrDisplayName) =>
+      all.firstWhere(
+        (p) => p.key == keyOrDisplayName || p.displayName == keyOrDisplayName,
+        orElse: () => warm,
+      );
 
   /// Renders a CSV of palette names + their hex codes into a single
   /// string the prompts can consume. e.g. "Warm (#8B1A2A, #B85028,

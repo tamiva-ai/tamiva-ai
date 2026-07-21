@@ -157,8 +157,13 @@ class FontPairs {
     educational, playful, minimalMono, swiss, script,
   ];
 
-  static FontPair byKey(String key) =>
-      all.firstWhere((p) => p.key == key, orElse: () => modernDefault);
+  /// Look up a font pair by its [key]. Tolerates legacy displayName strings
+  /// (e.g. "Editorial") so older saved BusinessProfiles load cleanly.
+  static FontPair byKey(String keyOrDisplayName) =>
+      all.firstWhere(
+        (p) => p.key == keyOrDisplayName || p.displayName == keyOrDisplayName,
+        orElse: () => modernDefault,
+      );
 
   /// CSV → "Modern default; Editorial" prompt fragment.
   static String describeCsv(String csv) {

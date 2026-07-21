@@ -305,7 +305,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
             borderRadius: BorderRadius.circular(TamivaRadii.md),
             side: const BorderSide(color: TamivaColors.divider),
           ),
-          title: Text('Email already registered',
+          title: Text('Account already exists',
               style: Theme.of(ctx).textTheme.titleLarge),
           content: Text(
             'This email is already registered. Would you like to reset your password?',
@@ -345,7 +345,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
           borderRadius: BorderRadius.circular(TamivaRadii.md),
           side: const BorderSide(color: TamivaColors.divider),
         ),
-        title: Text('You already have a studio',
+        title: Text('Account already exists',
             style: Theme.of(ctx).textTheme.titleLarge),
         content: Text(
           'This $subject is already registered. Sign in to pick up where you left off.',

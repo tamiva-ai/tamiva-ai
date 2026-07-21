@@ -8,6 +8,20 @@ import '../theme/tamiva_theme.dart';
 /// reactive - the parent can update selection after open).
 /// Pass [maxSelection] to cap the number of choices - if the user
 /// hits the cap, further taps flash a hint and don't select.
+///
+/// Set [autoDismissOnSelect] to true to make the sheet pop itself
+/// automatically on every selection change — useful for single-step
+/// "stepper" UIs where each pick should move the user on to the next
+/// field without them having to confirm. Only effective when
+/// [maxSelection] is non-null (i.e. there's a finite count of picks),
+/// and fires on both add and remove so the parent can react to
+/// "user changed their mind".
+///
+/// [onSelectionChanged] is invoked synchronously inside the tap
+/// handler with the new selection BEFORE the sheet pops. The parent
+/// typically uses this to advance focus, scroll into view, or reveal
+/// a "Continue" button. The popped value (via [Navigator.pop]) is the
+/// same list, so a parent can choose either mechanism.
 class MultiSelectSheet extends StatefulWidget {
   final String title;
   final String searchHint;
@@ -23,6 +37,14 @@ class MultiSelectSheet extends StatefulWidget {
   /// typography picker). Merged onto the base label style.
   final TextStyle? Function(String option)? optionTextStyleBuilder;
 
+  /// Pop the sheet automatically on every selection change. See class
+  /// docs for the full behaviour contract.
+  final bool autoDismissOnSelect;
+
+  /// Called on every selection change with the new list. Fires even
+  /// when [autoDismissOnSelect] is false so the parent can observe.
+  final void Function(List<String> newSelection)? onSelectionChanged;
+
   const MultiSelectSheet({
     super.key,
     required this.title,
@@ -32,6 +54,8 @@ class MultiSelectSheet extends StatefulWidget {
     this.maxSelection,
     this.optionLeadingBuilder,
     this.optionTextStyleBuilder,
+    this.autoDismissOnSelect = false,
+    this.onSelectionChanged,
   });
 
   @override
@@ -200,19 +224,14 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
                               setState(() {
                                 if (checked) {
                                   _selected.remove(option);
-                                  return;
-                                }
-                                // v37.1: maxSelection == 1 is single-select
-                                // (radio behavior) - tapping any unchecked
-                                // option replaces the existing one instead
-                                // of being blocked with a SnackBar.
-                                if (widget.maxSelection == 1) {
+                                } else if (widget.maxSelection == 1) {
+                                  // v37.1: maxSelection == 1 is single-select
+                                  // (radio behavior) - tapping any unchecked
+                                  // option replaces the existing one.
                                   _selected
                                     ..clear()
                                     ..add(option);
-                                  return;
-                                }
-                                if (widget.maxSelection != null &&
+                                } else if (widget.maxSelection != null &&
                                     _selected.length >= widget.maxSelection!) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
@@ -222,9 +241,24 @@ class _MultiSelectSheetState extends State<MultiSelectSheet> {
                                     ),
                                   );
                                   return;
+                                } else {
+                                  _selected.add(option);
                                 }
-                                _selected.add(option);
                               });
+                              // Notify the parent synchronously. The
+                              // parent can advance focus, scroll, or
+                              // reveal a Continue button based on this.
+                              widget.onSelectionChanged
+                                  ?.call(_selected.toList());
+                              // For stepper UIs (industry → tone →
+                              // typography) the user expects each pick to
+                              // move them on. Pop with the new list so
+                              // the awaiting showModalBottomSheet gets
+                              // the result.
+                              if (widget.autoDismissOnSelect &&
+                                  widget.maxSelection != null) {
+                                Navigator.pop(context, _selected.toList());
+                              }
                             },
                             child: Padding(
                               padding: const EdgeInsets.symmetric(

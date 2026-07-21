@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write   # required so we can push the version tag back to origin
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,6 +20,10 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          # We need the full history to enumerate vN.M.K tags. The default
+          # shallow clone would miss tags pointing at older commits.
+          fetch-depth: 0
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -24,14 +31,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Provision a known-good Android SDK + NDK + CMake. The preinstalled SDK
-      # on ubuntu-latest runners is missing ninja under cmake/3.22.1, which
-      # causes :jni:externalNativeBuildCleanRelease to fail with
-      # "A problem occurred starting process 'command '.../bin/ninja''".
+      # Provision a known-good Android SDK + NDK + CMake. The preinstalled
+      # SDK on ubuntu-latest runners is missing ninja under cmake/3.22.1,
+      # which causes :jni:externalNativeBuildCleanRelease to fail.
       #
-      # `packages:` MUST be a single-line, space-separated string. YAML block
-      # scalars (`|`) preserve newlines and cause sdkmanager to interpret the
-      # whole block as one package name.
+      # `packages:` MUST be a single-line, space-separated string. YAML
+      # block scalars (`|`) preserve newlines and cause sdkmanager to
+      # interpret the whole block as one package name.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -47,49 +53,113 @@ jobs:
       - name: Flutter Version
         run: flutter --version
 
+      # Compute the next versionCode / versionName from the highest
+      # existing vN.M.K tag, then export them to $GITHUB_ENV so the
+      # build step below can pick them up via --build-name / --build-number.
+      - name: Compute Next Version
+        id: version
+        working-directory: ${{ github.workspace }}
+        run: |
+          chmod +x .github/scripts/next-version.sh
+          # Each `key=value` line from the script becomes a step output
+          # and is also exported into the env so downstream steps can use $VERSION_NAME / $VERSION_CODE.
+          eval "$(./.github/scripts/next-version.sh)"
+          echo "tag=${tag}"             >> "$GITHUB_OUTPUT"
+          echo "version_name=${version_name}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${version_code}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}"             >> "$GITHUB_ENV"
+          echo "version_name=${version_name}" >> "$GITHUB_ENV"
+          echo "version_code=${version_code}" >> "$GITHUB_ENV"
+          echo "Computed next version: tag=${tag} version_name=${version_name} version_code=${version_code}"
+
+      # Defensive: bail out if this tag was created by another run while
+      # we were preparing. Without this, two concurrent runs could each
+      # compute the same "next" version and one would silently overwrite
+      # the other's AAB on Play Console.
+      - name: Check Tag is Available
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} already exists locally. Another build probably raced this one."
+            echo "::error::Re-run after bumping the tag manually, or delete the conflicting tag."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists on origin. Another build probably raced this one."
+            exit 1
+          fi
+        env:
+          TAG: ${{ env.tag }}
+
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Show Android Files
-        working-directory: flutter_app/android
+      # `flutter build appbundle --build-name=X --build-number=Y` overrides
+      # whatever pubspec.yaml says. This is the only path that gets the
+      # tag-derived version into the AAB without committing a version bump
+      # to source control. The Gradle bundleRelease task alone wouldn't
+      # pick up --build-number.
+      - name: Build AAB
         run: |
-          pwd
-          ls -la
-          ls -la gradle/wrapper
-
-      # No `clean` step - bundleRelease overwrites outputs and the fresh-clean
-      # task can fail before AGP has a chance to download/provision the SDK
-      # tools it needs.
-      - name: Build with Gradle
-        working-directory: flutter_app/android
-        run: |
-          chmod +x gradlew
-          ./gradlew bundleRelease \
-            --no-daemon \
-            --console=plain \
-            --warning-mode=summary \
-            2>&1 | tee gradle-build.log
+          flutter build appbundle \
+            --release \
+            --build-name="${VERSION_NAME}" \
+            --build-number="${VERSION_CODE}" \
+            --no-tree-shake-icons \
+            2>&1 | tee flutter-build.log
           status=${PIPESTATUS[0]}
-          echo "::notice::Gradle exit status: $status"
+          echo "::notice::Flutter exit status: $status"
           if [ "$status" -ne 0 ]; then
-            echo "===== FAILURE TAIL (last 200 lines of gradle-build.log) ====="
-            tail -n 200 gradle-build.log
+            echo "===== FAILURE TAIL (last 200 lines of flutter-build.log) ====="
+            tail -n 200 flutter-build.log
             echo "===== END FAILURE TAIL ====="
           fi
           exit "$status"
+        env:
+          VERSION_NAME: ${{ env.version_name }}
+          VERSION_CODE: ${{ env.version_code }}
+
+      - name: Verify AAB Exists
+        run: |
+          set -e
+          AAB_PATH="build/app/outputs/bundle/release/app-release.aab"
+          if [[ ! -f "$AAB_PATH" ]]; then
+            echo "::error::Expected AAB not found at $AAB_PATH"
+            exit 1
+          fi
+          echo "AAB size: $(du -h "$AAB_PATH" | cut -f1)"
+          # Bundletool isn't available here, so we rely on the Flutter
+          # build args to know the versionCode/Name landed. If you need
+          # a stronger guarantee, add the bundletool jar to the runner
+          # and run `bundletool dump manifest`.
+          echo "versionName=$VERSION_NAME versionCode=$VERSION_CODE"
+
+      - name: Push Version Tag
+        # Tag this commit with vN.M.K so future builds can derive their
+        # version from it. Uses the workflow's GITHUB_TOKEN, which has
+        # permission to push tags to the same repo.
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Build ${TAG}: versionName=${VERSION_NAME} versionCode=${VERSION_CODE}"
+          git push origin "${TAG}"
+        env:
+          TAG: ${{ env.tag }}
+          VERSION_NAME: ${{ env.version_name }}
+          VERSION_CODE: ${{ env.version_code }}
 
       - name: Upload AAB
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: tamiva-release-aab
+          name: tamiva-release-aab-${{ env.tag }}
           path: flutter_app/build/app/outputs/bundle/release/*.aab
           if-no-files-found: error
 
-      - name: Upload Gradle Log
+      - name: Upload Flutter Log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gradle-build-log
-          path: flutter_app/android/gradle-build.log
+          name: flutter-build-log-${{ env.tag }}
+          path: flutter_app/flutter-build.log
           if-no-files-found: ignore

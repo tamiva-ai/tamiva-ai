@@ -77,7 +77,12 @@ function toneClause(tone: string | null): string {
 // v24 palette + font descriptors
 // ---------------------------------------------------------------------
 
-/** Hex-coded palette list. The Flutter app mirrors this in palette_styles.dart. */
+/**
+ * Hex-coded palette list. The Flutter app mirrors this in
+ * flutter_app/lib/data/palette_styles.dart — keys + hexes must stay in
+ * sync. Anything missing here falls back to the warm palette, which is
+ * the source of the "logo doesn't match my colour pick" bug.
+ */
 const PALETTE_HEX: Record<string, string> = {
   warm: "#8B1A2A, #B85028, #D4A72C",
   cool: "#0F2C44, #1F8FAA, #C0C0C0",
@@ -85,9 +90,28 @@ const PALETTE_HEX: Record<string, string> = {
   earthy: "#5C4033, #708238, #D2B48C",
   pastel: "#FFB6C1, #E6E6FA, #98FF98",
   vibrant: "#7DF9FF, #FF00FF, #FFEA00",
+  jewel_tones: "#046A38, #0F52BA, #9B111E",
+  sunset: "#FF7F50, #FFDAB9, #E6E6FA",
+  ocean: "#003366, #00CED1, #93E9BE",
+  forest: "#1B4D3E, #606C38, #8FBC8F",
+  desert: "#C2B280, #E2725B, #A0522D",
+  royal: "#4B0082, #FFD700, #FFFFF0",
+  minimalist: "#FFFFFF, #36454F, #D3D3D3",
+  neon: "#CCFF00, #FF1493, #00FFFF",
+  autumn: "#CC5500, #FFDB58, #DC143C",
+  winter: "#AFDBF5, #C0C0C0, #FFFFFF",
+  tropical: "#40E0D0, #FFC324, #FF77FF",
+  vintage: "#FFDB58, #008080, #B7410E",
+  muted: "#9CAF88, #DCAE96, #B38B6D",
+  high_contrast: "#000000, #FFD300, #E10600",
+  luxe_gold: "#014421, #F7E7CE, #D4AF37",
 };
 
-/** Category-only font descriptions. Mirrors font_pairs.dart. */
+/**
+ * Category-only font descriptions. Mirrors
+ * flutter_app/lib/data/font_pairs.dart — keys must match exactly,
+ * otherwise the prompt falls back to modern_default.
+ */
 const FONT_CATEGORY_DESC: Record<string, string> = {
   modern_default: "Modern sans display + clean sans body",
   editorial: "Luxury serif display + neutral sans body",
@@ -95,6 +119,21 @@ const FONT_CATEGORY_DESC: Record<string, string> = {
   elegant_serif: "Heritage serif display + clean sans body",
   utility: "Functional sans display + neutral sans body",
   bold_display: "Bold condensed display + neutral sans body",
+  classic_serif: "Warm literary serif display + matching serif body",
+  condensed: "Tall condensed display + open sans body",
+  handwritten: "Casual handwritten display + soft sans body",
+  retro: "Vintage display serif + neutral sans body",
+  corporate: "Friendly geometric sans display + matching sans body",
+  brutalist: "Mono display + structured sans body",
+  geometric: "Geometric sans display + matching geometric sans body",
+  humanist: "Rounded humanist sans display + matching humanist sans body",
+  luxury: "Refined serif display + elegant sans body",
+  sports: "Heavy condensed display + condensed sans body",
+  educational: "Readable serif display + neutral sans body",
+  playful: "Rounded display + soft sans body",
+  minimal_mono: "Mono display + neutral sans body",
+  swiss: "Neutral sans display + matching sans body",
+  script: "Flowing script display + clean sans body",
 };
 
 function paletteClause(csv: string | null): string {

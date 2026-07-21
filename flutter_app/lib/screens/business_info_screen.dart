@@ -57,6 +57,14 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
   List<String> _selectedPalettes = []; // v24
   List<String> _selectedFonts = [];      // v24
 
+  // v38 stepper UX: scrollable form with anchored rows so the auto-
+  // advance flow can scroll each subsequent picker into view after the
+  // user picks in the previous one.
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _toneRowKey = GlobalKey();
+  final GlobalKey _typographyRowKey = GlobalKey();
+  final GlobalKey _paletteRowKey = GlobalKey();
+
   bool _submitting = false;
   bool _loading = true;
   bool _locked = false;
@@ -68,6 +76,11 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
 
   /// v37: any paid tier unlocks the editing flow.
   bool get _isPaid => _tier != 'free' && _tier.isNotEmpty;
+
+  /// v39: Continue button only appears once the user has picked a
+  /// colour palette — the last step in the auto-advance chain.
+  /// Industry → Brand Tone → Typography → Palette → Continue.
+  bool get _canContinue => _selectedPalettes.isNotEmpty;
 
   UserFacingError? _error;
 
@@ -171,11 +184,31 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
   @override
   void dispose() {
     _draftSaveDebouncer?.cancel();
+    _scrollController.dispose();
     _nameController.removeListener(_scheduleDraftSave);
     _taglineController.removeListener(_scheduleDraftSave);
     _nameController.dispose();
     _taglineController.dispose();
     super.dispose();
+  }
+
+  /// Scroll the row identified by [key] into view after the bottom
+  /// sheet closes. Brief delay so the sheet's pop animation finishes
+  /// first; without it the scroll-to-renderable can target stale
+  /// layout positions.
+  void _advanceToStep(GlobalKey key) {
+    if (!mounted) return;
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      final ctx = key.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+        alignment: 0.2,
+      );
+    });
   }
 
   Future<void> _pickIndustries() async {
@@ -190,11 +223,15 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
         // v37.1: single-select - the studio treats industry as a
         // single defining category, so pick one.
         maxSelection: 1,
+        // Stepper UX: tap a radio → sheet pops itself → we scroll the
+        // Brand Tone row into view below.
+        autoDismissOnSelect: true,
       ),
     );
     if (result != null && mounted) {
       setState(() => _selectedIndustries = result);
       _scheduleDraftSave();
+      _advanceToStep(_toneRowKey);
     }
   }
 
@@ -210,15 +247,24 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
         // v37.1: single-select - one tone reads cleaner than a blend
         // across the brand kit (logo, carousel, film).
         maxSelection: 1,
+        autoDismissOnSelect: true,
       ),
     );
     if (result != null && mounted) {
       setState(() => _selectedTones = result);
       _scheduleDraftSave();
+      _advanceToStep(_typographyRowKey);
     }
   }
 
   Future<void> _pickPalettes() async {
+    // Send palette KEYS (e.g. "warm") — not displayNames ("Warm (maroon +
+    // ember + gold)") — so the backend PALETTE_HEX map can resolve them.
+    // The displayName was unsplittable on the server, so any palette
+    // beyond the original 6 silently fell back to warm.
+    final selectedKeys = _selectedPalettes
+        .map((k) => PaletteStyles.byKey(k).key)
+        .toList();
     final result = await showModalBottomSheet<List<String>>(
       context: context,
       isScrollControlled: true,
@@ -226,8 +272,17 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       builder: (_) => MultiSelectSheet(
         title: 'Pick a colour palette',
         options: PaletteStyles.all.map((p) => p.displayName).toList(),
-        selected: _selectedPalettes,
+        selected: selectedKeys
+            .map((k) =>
+                PaletteStyles.byKey(k).displayName)
+            .toList(),
         maxSelection: 1,
+        // v39: palette is the last step in the auto-advance chain
+        // (after typography). Tapping a swatch pops the sheet; the
+        // Continue button then reveals itself at the bottom because
+        // _canContinue becomes true. No further _advanceToStep call
+        // — there is no row after palette to scroll to.
+        autoDismissOnSelect: true,
         optionLeadingBuilder: (option) {
           final palette = PaletteStyles.all.firstWhere(
             (p) => p.displayName == option,
@@ -253,12 +308,27 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       ),
     );
     if (result != null && mounted) {
-      setState(() => _selectedPalettes = result);
+      // Resolve displayNames back to keys for storage.
+      final resolved = result
+          .map((dn) => PaletteStyles.all
+              .firstWhere(
+                (p) => p.displayName == dn,
+                orElse: () => PaletteStyles.warm,
+              )
+              .key)
+          .toList();
+      setState(() => _selectedPalettes = resolved);
       _scheduleDraftSave();
     }
   }
 
   Future<void> _pickFonts() async {
+    // Send font KEYS (e.g. "editorial") — not displayNames ("Editorial").
+    // The backend FONT_CATEGORY_DESC map can then resolve them; any font
+    // beyond the original 6 would otherwise fall back to modern_default.
+    final selectedKeys = _selectedFonts
+        .map((k) => FontPairs.byKey(k).key)
+        .toList();
     final result = await showModalBottomSheet<List<String>>(
       context: context,
       isScrollControlled: true,
@@ -266,8 +336,12 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       builder: (_) => MultiSelectSheet(
         title: 'Pick a typography style',
         options: FontPairs.all.map((p) => p.displayName).toList(),
-        selected: _selectedFonts,
+        selected: selectedKeys
+            .map((k) => FontPairs.byKey(k).displayName)
+            .toList(),
         maxSelection: 1,
+        // v39: typography now advances into the palette step.
+        autoDismissOnSelect: true,
         optionTextStyleBuilder: (option) {
           final pair = FontPairs.all.firstWhere(
             (p) => p.displayName == option,
@@ -278,8 +352,17 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
       ),
     );
     if (result != null && mounted) {
-      setState(() => _selectedFonts = result);
+      final resolved = result
+          .map((dn) => FontPairs.all
+              .firstWhere(
+                (p) => p.displayName == dn,
+                orElse: () => FontPairs.modernDefault,
+              )
+              .key)
+          .toList();
+      setState(() => _selectedFonts = resolved);
       _scheduleDraftSave();
+      _advanceToStep(_paletteRowKey);
     }
   }
 
@@ -477,71 +560,114 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
         heroAsset: 'assets/hero/business_info.png',
         title: 'About your business',
         actions: [LogoutAction(apiClient: widget.apiClient)],
-        body: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('STEP 1 OF 3', style: textTheme.labelMedium),
-                const SizedBox(height: 8),
-                Text('The basics', style: textTheme.headlineMedium),
-                const SizedBox(height: 24),
-                TextFormField(
-                  controller: _nameController,
-                  style: textTheme.bodyLarge,
-                  decoration: const InputDecoration(labelText: 'BUSINESS NAME'),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Required' : null,
-                ),
-                const SizedBox(height: 16),
-                _IndustryPicker(
-                  selected: _selectedIndustries,
-                  onTap: _pickIndustries,
-                  onRemove: (label) =>
-                      setState(() => _selectedIndustries.remove(label)),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _taglineController,
-                  style: textTheme.bodyLarge,
-                  decoration: const InputDecoration(labelText: 'TAGLINE (OPTIONAL)'),
-                ),
-                const SizedBox(height: 16),
-                _TonePicker(
+        body: Form(
+          key: _formKey,
+          child: ListView(
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
+            children: [
+              Text('STEP 1 OF 3', style: textTheme.labelMedium),
+              const SizedBox(height: 8),
+              Text('The basics', style: textTheme.headlineMedium),
+              const SizedBox(height: 24),
+
+              // 1. Business name — required, blocks submit if empty.
+              TextFormField(
+                controller: _nameController,
+                style: textTheme.bodyLarge,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(labelText: 'BUSINESS NAME'),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Enter your business name to continue' : null,
+              ),
+              const SizedBox(height: 16),
+
+              // 2. Tagline — optional, just flows below the name.
+              TextFormField(
+                controller: _taglineController,
+                style: textTheme.bodyLarge,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(labelText: 'TAGLINE (OPTIONAL)'),
+              ),
+              const SizedBox(height: 16),
+
+              // 3. Industry — auto-advances to Brand Tone on selection.
+              _IndustryPicker(
+                selected: _selectedIndustries,
+                onTap: _pickIndustries,
+                onRemove: (label) =>
+                    setState(() => _selectedIndustries.remove(label)),
+              ),
+              const SizedBox(height: 16),
+
+              // 4. Brand tone — anchored so the auto-advance can scroll
+              //    it into view after Industry is picked.
+              Container(
+                key: _toneRowKey,
+                child: _TonePicker(
                   selected: _selectedTones,
                   onTap: _pickTones,
                   onRemove: (label) =>
                       setState(() => _selectedTones.remove(label)),
                 ),
-                const SizedBox(height: 16),
-                _PalettePicker(
-                  selected: _selectedPalettes,
-                  onTap: _pickPalettes,
-                  onRemove: (label) =>
-                      setState(() => _selectedPalettes.remove(label)),
-                ),
-                const SizedBox(height: 16),
-                _FontPicker(
+              ),
+              const SizedBox(height: 16),
+
+              // 5. Typography — anchored so auto-advance can scroll it into
+              //    view after Brand Tone is picked. Advances into the
+              //    palette step on selection (v39).
+              Container(
+                key: _typographyRowKey,
+                child: _FontPicker(
                   selected: _selectedFonts,
                   onTap: _pickFonts,
                   onRemove: (label) =>
                       setState(() => _selectedFonts.remove(label)),
                 ),
-                const SizedBox(height: 28),
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: InlineError(error: _error!),
-                  ),
+              ),
+              const SizedBox(height: 16),
+
+              // 6. Palette — anchored so the typography → palette auto-
+              //    advance can scroll it into view. After this pick,
+              //    Continue reveals itself (see _canContinue).
+              Container(
+                key: _paletteRowKey,
+                child: _PalettePicker(
+                  selected: _selectedPalettes,
+                  onTap: _pickPalettes,
+                  onRemove: (label) =>
+                      setState(() => _selectedPalettes.remove(label)),
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: InlineError(error: _error!),
+                ),
+
+              // 7. Continue button — only revealed once Palette has been picked.
+              //    Before that, show a small hint so the user understands
+              //    what unlocks the button.
+              if (_canContinue) ...[
                 GradientCtaButton(
                   loading: _submitting,
                   onPressed: _submitting ? null : _submit,
                   child: const Text('Continue  →'),
                 ),
-              ],
-            ),
+              ] else
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Pick a colour palette to continue',
+                    textAlign: TextAlign.center,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: TamivaColors.textFaint,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -678,7 +804,18 @@ class _Chip extends StatelessWidget {
   }
 }
 
-class _IndustryPicker extends StatelessWidget {
+/// Industry picker that participates in form validation. Wrapped in a
+/// [FormField] so `_formKey.currentState.validate()` covers the picker
+/// alongside the [TextFormField]s in this form. Empty selection →
+/// inline "Pick your industry to continue" error rendered under the
+/// card. Tapping a chip to remove, or opening the sheet and picking
+/// afresh, calls `field.didChange(...)` so the validator re-runs
+/// immediately and clears the error as soon as a real selection exists.
+///
+/// Stateful so we can mirror the parent's [selected] list into the
+/// FormField whenever it changes (e.g. after the bottom sheet closes
+/// and the parent calls `setState(() => _selectedIndustries = result)`).
+class _IndustryPicker extends StatefulWidget {
   final List<String> selected;
   final VoidCallback onTap;
   final void Function(String) onRemove;
@@ -689,13 +826,64 @@ class _IndustryPicker extends StatelessWidget {
   });
 
   @override
+  State<_IndustryPicker> createState() => _IndustryPickerState();
+}
+
+class _IndustryPickerState extends State<_IndustryPicker> {
+  final GlobalKey<FormFieldState<List<String>>> _fieldKey =
+      GlobalKey<FormFieldState<List<String>>>();
+
+  @override
+  void didUpdateWidget(covariant _IndustryPicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Whenever the parent hands us a new selection (e.g. the user just
+    // picked one in the bottom sheet), push it into the FormField so
+    // the validator sees the fresh value and the error clears.
+    if (!_listEq(oldWidget.selected, widget.selected)) {
+      _fieldKey.currentState?.didChange(List<String>.of(widget.selected));
+    }
+  }
+
+  static bool _listEq(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return _ChipPickerCard(
-      label: 'INDUSTRY',
-      emptyHint: 'Tap to pick one or more',
-      selected: selected,
-      onTap: onTap,
-      onRemove: onRemove,
+    return FormField<List<String>>(
+      key: _fieldKey,
+      initialValue: List<String>.of(widget.selected),
+      validator: (value) =>
+          (value == null || value.isEmpty) ? 'Pick your industry to continue' : null,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
+      builder: (field) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _ChipPickerCard(
+              label: 'INDUSTRY',
+              emptyHint: 'Tap to pick one',
+              selected: widget.selected,
+              onTap: widget.onTap,
+              onRemove: widget.onRemove,
+            ),
+            if (field.hasError)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 4),
+                child: Text(
+                  field.errorText ?? '',
+                  style: Theme.of(field.context).textTheme.bodySmall?.copyWith(
+                        color: TamivaColors.error,
+                      ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

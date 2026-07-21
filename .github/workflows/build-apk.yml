@@ -5,29 +5,77 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write   # required so we can push the version tag back to origin
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          # Full history needed so we can enumerate vN.M.K tags. Default
+          # shallow clone would miss tags pointing at older commits.
+          fetch-depth: 0
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # Provision a known-good Android SDK + NDK + CMake (see build-aab.yml
-      # for the reason this is needed).
+      # Provision a known-good Android SDK + NDK + CMake. The preinstalled
+      # SDK on ubuntu-latest runners is missing ninja under cmake/3.22.1,
+      # which causes :jni:externalNativeBuildCleanRelease to fail.
+      #
+      # `packages:` MUST be a single-line, space-separated string. YAML
+      # block scalars (`|`) preserve newlines and cause sdkmanager to
+      # interpret the whole block as one package name.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
           cmdline-tools-version: "11076708"
           packages: "platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973 cmake;3.22.1"
 
-      - uses: subosito/flutter-action@v2
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version-file: .github/flutter-version
+
+      # Compute the next versionCode / versionName from the highest
+      # existing vN.M.K tag. Same logic as build-aab.yml — both
+      # workflows share the tag namespace, so a build pushed via
+      # either workflow will advance the counter for the other.
+      - name: Compute Next Version
+        id: version
+        working-directory: ${{ github.workspace }}
+        run: |
+          chmod +x .github/scripts/next-version.sh
+          eval "$(./.github/scripts/next-version.sh)"
+          echo "tag=${tag}"             >> "$GITHUB_OUTPUT"
+          echo "version_name=${version_name}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${version_code}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}"             >> "$GITHUB_ENV"
+          echo "version_name=${version_name}" >> "$GITHUB_ENV"
+          echo "version_code=${version_code}" >> "$GITHUB_ENV"
+          echo "Computed next version: tag=${tag} version_name=${version_name} version_code=${version_code}"
+
+      # Bail out if another build raced us and pushed this tag already.
+      # The retry will compute the version after the racing tag.
+      - name: Check Tag is Available
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} already exists locally."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists on origin."
+            exit 1
+          fi
+        env:
+          TAG: ${{ env.tag }}
 
       - name: Clean stale build artifacts
         working-directory: flutter_app
@@ -62,35 +110,68 @@ jobs:
         run: |
           sed -i 's/android:label="[^"]*"/android:label="Tamiva"/' android/app/src/main/AndroidManifest.xml
 
-      - name: Build with Gradle
-        working-directory: flutter_app/android
+      # `flutter build apk --build-name=X --build-number=Y` is the only
+      # path that gets the tag-derived version into the APK without
+      # committing a version bump to source control. Running
+      # `./gradlew assembleRelease` directly would ignore --build-name
+      # and emit whatever pubspec.yaml says.
+      - name: Build APK
+        working-directory: flutter_app
         run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease \
-            --no-daemon \
-            --console=plain \
-            --warning-mode=summary \
-            2>&1 | tee gradle-build.log
+          flutter build apk \
+            --release \
+            --build-name="${VERSION_NAME}" \
+            --build-number="${VERSION_CODE}" \
+            --no-tree-shake-icons \
+            2>&1 | tee flutter-build.log
           status=${PIPESTATUS[0]}
-          echo "::notice::Gradle exit status: $status"
+          echo "::notice::Flutter exit status: $status"
           if [ "$status" -ne 0 ]; then
-            echo "===== FAILURE TAIL (last 200 lines of gradle-build.log) ====="
-            tail -n 200 gradle-build.log
+            echo "===== FAILURE TAIL (last 200 lines of flutter-build.log) ====="
+            tail -n 200 flutter-build.log
             echo "===== END FAILURE TAIL ====="
           fi
           exit "$status"
+        env:
+          VERSION_NAME: ${{ env.version_name }}
+          VERSION_CODE: ${{ env.version_code }}
+
+      - name: Verify APK Exists
+        working-directory: flutter_app
+        run: |
+          set -e
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          if [[ ! -f "$APK_PATH" ]]; then
+            echo "::error::Expected APK not found at $APK_PATH"
+            exit 1
+          fi
+          echo "APK size: $(du -h "$APK_PATH" | cut -f1)"
+          echo "versionName=$VERSION_NAME versionCode=$VERSION_CODE"
+
+      - name: Push Version Tag
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Build ${TAG}: versionName=${VERSION_NAME} versionCode=${VERSION_CODE}"
+          git push origin "${TAG}"
+        env:
+          TAG: ${{ env.tag }}
+          VERSION_NAME: ${{ env.version_name }}
+          VERSION_CODE: ${{ env.version_code }}
 
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: tamiva-app-release
+          name: tamiva-app-release-apk-${{ env.tag }}
           path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
 
-      - name: Upload Gradle Log
+      - name: Upload Flutter Log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gradle-build-log
-          path: flutter_app/android/gradle-build.log
+          name: flutter-build-log-apk-${{ env.tag }}
+          path: flutter_app/flutter-build.log
           if-no-files-found: ignore
