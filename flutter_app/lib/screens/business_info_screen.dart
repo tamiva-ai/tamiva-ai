@@ -560,114 +560,125 @@ class _BusinessInfoScreenState extends State<BusinessInfoScreen> {
         heroAsset: 'assets/hero/business_info.png',
         title: 'About your business',
         actions: [LogoutAction(apiClient: widget.apiClient)],
+        // Body sits inside a SliverToBoxAdapter in HeroBannerScaffold,
+        // which gives unbounded height. ListView can't compute its
+        // scroll extent under unbounded constraints (renders zero
+        // height → black screen), so we use a SingleChildScrollView
+        // wrapping a Column. ScrollController on the SingleChildScrollView
+        // still drives the stepper auto-advance via
+        // Scrollable.ensureVisible on _toneRowKey / _typographyRowKey /
+        // _paletteRowKey.
         body: Form(
           key: _formKey,
-          child: ListView(
+          child: SingleChildScrollView(
             controller: _scrollController,
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
-            children: [
-              Text('STEP 1 OF 3', style: textTheme.labelMedium),
-              const SizedBox(height: 8),
-              Text('The basics', style: textTheme.headlineMedium),
-              const SizedBox(height: 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('STEP 1 OF 3', style: textTheme.labelMedium),
+                const SizedBox(height: 8),
+                Text('The basics', style: textTheme.headlineMedium),
+                const SizedBox(height: 24),
 
-              // 1. Business name — required, blocks submit if empty.
-              TextFormField(
-                controller: _nameController,
-                style: textTheme.bodyLarge,
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(labelText: 'BUSINESS NAME'),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Enter your business name to continue' : null,
-              ),
-              const SizedBox(height: 16),
+                // 1. Business name — required, blocks submit if empty.
+                TextFormField(
+                  controller: _nameController,
+                  style: textTheme.bodyLarge,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(labelText: 'BUSINESS NAME'),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Enter your business name to continue' : null,
+                ),
+                const SizedBox(height: 16),
 
-              // 2. Tagline — optional, just flows below the name.
-              TextFormField(
-                controller: _taglineController,
-                style: textTheme.bodyLarge,
-                textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(labelText: 'TAGLINE (OPTIONAL)'),
-              ),
-              const SizedBox(height: 16),
+                // 2. Tagline — optional, just flows below the name.
+                TextFormField(
+                  controller: _taglineController,
+                  style: textTheme.bodyLarge,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(labelText: 'TAGLINE (OPTIONAL)'),
+                ),
+                const SizedBox(height: 16),
 
-              // 3. Industry — auto-advances to Brand Tone on selection.
-              _IndustryPicker(
-                selected: _selectedIndustries,
-                onTap: _pickIndustries,
-                onRemove: (label) =>
-                    setState(() => _selectedIndustries.remove(label)),
-              ),
-              const SizedBox(height: 16),
-
-              // 4. Brand tone — anchored so the auto-advance can scroll
-              //    it into view after Industry is picked.
-              Container(
-                key: _toneRowKey,
-                child: _TonePicker(
-                  selected: _selectedTones,
-                  onTap: _pickTones,
+                // 3. Industry — auto-advances to Brand Tone on selection.
+                _IndustryPicker(
+                  selected: _selectedIndustries,
+                  onTap: _pickIndustries,
                   onRemove: (label) =>
-                      setState(() => _selectedTones.remove(label)),
+                      setState(() => _selectedIndustries.remove(label)),
                 ),
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
 
-              // 5. Typography — anchored so auto-advance can scroll it into
-              //    view after Brand Tone is picked. Advances into the
-              //    palette step on selection (v39).
-              Container(
-                key: _typographyRowKey,
-                child: _FontPicker(
-                  selected: _selectedFonts,
-                  onTap: _pickFonts,
-                  onRemove: (label) =>
-                      setState(() => _selectedFonts.remove(label)),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // 6. Palette — anchored so the typography → palette auto-
-              //    advance can scroll it into view. After this pick,
-              //    Continue reveals itself (see _canContinue).
-              Container(
-                key: _paletteRowKey,
-                child: _PalettePicker(
-                  selected: _selectedPalettes,
-                  onTap: _pickPalettes,
-                  onRemove: (label) =>
-                      setState(() => _selectedPalettes.remove(label)),
-                ),
-              ),
-              const SizedBox(height: 28),
-
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: InlineError(error: _error!),
-                ),
-
-              // 7. Continue button — only revealed once Palette has been picked.
-              //    Before that, show a small hint so the user understands
-              //    what unlocks the button.
-              if (_canContinue) ...[
-                GradientCtaButton(
-                  loading: _submitting,
-                  onPressed: _submitting ? null : _submit,
-                  child: const Text('Continue  →'),
-                ),
-              ] else
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Pick a colour palette to continue',
-                    textAlign: TextAlign.center,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: TamivaColors.textFaint,
-                    ),
+                // 4. Brand tone — anchored so the auto-advance can scroll
+                //    it into view after Industry is picked.
+                Container(
+                  key: _toneRowKey,
+                  child: _TonePicker(
+                    selected: _selectedTones,
+                    onTap: _pickTones,
+                    onRemove: (label) =>
+                        setState(() => _selectedTones.remove(label)),
                   ),
                 ),
-            ],
+                const SizedBox(height: 16),
+
+                // 5. Typography — anchored so auto-advance can scroll it
+                //    into view after Brand Tone is picked. Advances into
+                //    the palette step on selection (v39).
+                Container(
+                  key: _typographyRowKey,
+                  child: _FontPicker(
+                    selected: _selectedFonts,
+                    onTap: _pickFonts,
+                    onRemove: (label) =>
+                        setState(() => _selectedFonts.remove(label)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // 6. Palette — anchored so the typography → palette auto-
+                //    advance can scroll it into view. After this pick,
+                //    Continue reveals itself (see _canContinue).
+                Container(
+                  key: _paletteRowKey,
+                  child: _PalettePicker(
+                    selected: _selectedPalettes,
+                    onTap: _pickPalettes,
+                    onRemove: (label) =>
+                        setState(() => _selectedPalettes.remove(label)),
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: InlineError(error: _error!),
+                  ),
+
+                // 7. Continue button — only revealed once Palette has been
+                //    picked. Before that, show a small hint so the user
+                //    understands what unlocks the button.
+                if (_canContinue) ...[
+                  GradientCtaButton(
+                    loading: _submitting,
+                    onPressed: _submitting ? null : _submit,
+                    child: const Text('Continue  →'),
+                  ),
+                ] else
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      'Pick a colour palette to continue',
+                      textAlign: TextAlign.center,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: TamivaColors.textFaint,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
