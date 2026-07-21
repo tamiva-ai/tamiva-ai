@@ -127,6 +127,33 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         await _doSignIn();
       }
     } catch (e) {
+      // TEMP: ALWAYS log the failure here, regardless of which path the
+      // error takes. _doSignup() also tries to set these, but its catch
+      // block may not run if the exception type is unexpected (e.g.
+      // SocketException, FormatException, generic Exception). Putting it
+      // here as a fallback guarantees the diag panel appears on screen.
+      if (mounted) {
+        setState(() {
+          if (e is ApiException) {
+            _diagStatus = 'statusCode=${e.statusCode}';
+            _diagBody = e.body;
+            _diagExtracted = _extractApiMessage(e) ?? '(null)';
+            _diagMatches =
+                'extracted=${_looksLikeAlreadyRegistered(_diagExtracted)}, rawBody=${_looksLikeAlreadyRegistered(e.body)}, type=ApiException, mounted=$mounted';
+          } else {
+            _diagStatus = 'type=${e.runtimeType}';
+            _diagBody = e.toString();
+            _diagExtracted = '(n/a)';
+            _diagMatches = 'type!=ApiException, mounted=$mounted';
+          }
+          _diagAction = (mounted && e is ApiException &&
+                  (_looksLikeAlreadyRegistered(_extractApiMessage(e) ?? '') ||
+                      _looksLikeAlreadyRegistered(e.body)))
+              ? 'routing to dialog'
+              : 'NOT routing to dialog — rethrowing';
+        });
+      }
+
       // Sign-up only: if the backend says the email/mobile is already
       // registered, surface the dedicated dialog (with the canonical
       // "Account already exists" title + reset-password/sign-in
