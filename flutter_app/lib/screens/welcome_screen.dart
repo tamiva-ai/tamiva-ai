@@ -118,10 +118,33 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         await _doSignIn();
       }
     } catch (e) {
-      setState(() => _error = _formatAuthError(e, _signUpMode));
+      // Sign-up only: if the backend says the email/mobile is already
+      // registered, surface the dedicated dialog (with the canonical
+      // "Account already exists" title + reset-password/sign-in
+      // actions) instead of the generic inline error. Login has its
+      // own copy on the inline path because "wrong password" deserves
+      // a single inline retry hint, not a popup.
+      if (_signUpMode && e is ApiException) {
+        final body = _extractApiMessage(e) ?? e.body;
+        if (_looksLikeAlreadyRegistered(body)) {
+          await _showAlreadyRegisteredDialog(body);
+          return;
+        }
+      }
+      if (mounted) setState(() => _error = _formatAuthError(e, _signUpMode));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// True when a backend message (or raw JSON body) indicates the user
+  /// already has an account. Sign-up-only check — login never reaches
+  /// here.
+  bool _looksLikeAlreadyRegistered(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('already registered') ||
+        lower.contains('already has a studio') ||
+        lower.contains('already exists');
   }
 
   /// Build a friendly error for the auth surface.
@@ -232,7 +255,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     try {
       user = await _callSignup();
     } on ApiException catch (e) {
-      if (e.statusCode == 409) {
+      // Route the dedicated "Account already exists" dialog if the body
+      // text suggests a duplicate, regardless of the HTTP status code.
+      // Backend sometimes returns 409, sometimes 400 with a body that
+      // still contains "already has a studio" / "already registered" —
+      // either way the user needs the dialog, not the inline error.
+      if (mounted && _looksLikeAlreadyRegistered(_extractApiMessage(e) ?? e.body)) {
         await _showAlreadyRegisteredDialog(e.body);
         return;
       }
@@ -287,10 +315,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   }
 
   Future<void> _showAlreadyRegisteredDialog(String body) async {
-    // v37: friendlier copy per product. For an email collision we
-    // surface the canonical "would you like to reset your password?"
-    // prompt. For a phone collision we keep the existing behaviour
-    // (sign in instead) since there's no password flow tied to phone.
+    // For an email collision we surface the canonical "would you like to
+    // reset your password?" prompt. For a phone collision we keep the
+    // existing behaviour (sign in instead) since there's no password
+    // flow tied to phone.
     final lower = body.toLowerCase();
     final isEmail = lower.contains('email');
     final isPhone = lower.contains('phone') || lower.contains('mobile');
