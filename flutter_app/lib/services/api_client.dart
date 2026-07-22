@@ -88,7 +88,32 @@ class ApiClient {
       }),
     ).timeout(_kShortTimeout);
     _throwIfError(res, allowAnonymous: true);
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    // Defensive: the backend occasionally returns 2xx with a malformed
+    // body (e.g., missing userId when a partial response is sent during
+    // a deploy). Validate the shape explicitly so we get a proper
+    // ApiException instead of a Dart TypeError that crashes parsing.
+    final Map<String, dynamic> body;
+    try {
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw ApiException(
+          res.statusCode,
+          '{"error":"Malformed auth response: top-level is ${decoded.runtimeType}"}',
+        );
+      }
+      body = decoded;
+    } on FormatException {
+      throw ApiException(
+        res.statusCode,
+        '{"error":"Malformed auth response: not valid JSON"}',
+      );
+    }
+    if (body['userId'] is! String) {
+      throw ApiException(
+        res.statusCode,
+        '{"error":"Malformed auth response: userId missing or not a string"}',
+      );
+    }
     return _userFromAuthBody(body, email: email, phone: phone);
   }
 
@@ -154,12 +179,18 @@ class ApiClient {
     required String email,
     String? phone,
   }) {
+    // Defensive: `body['userId'] as String` would throw a TypeError if
+    // the field is null or missing. Use a soft fallback so the caller
+    // gets a usable User object even on a partially-shaped response.
+    // Callers that need strict validation should check `user.id` for
+    // emptiness and treat as auth failure.
+    final userId = body['userId'];
     return User(
-      id: body['userId'] as String,
+      id: userId is String ? userId : '',
       email: email,
-      fullName: body['fullName'] as String?,
+      fullName: body['fullName'] is String ? body['fullName'] as String : null,
       phone: phone,
-      tier: body['tier'] as String? ?? 'free',
+      tier: body['tier'] is String ? body['tier'] as String : 'free',
       tierUpdatedAt: body['tierUpdatedAt'] is String
           ? DateTime.tryParse(body['tierUpdatedAt'] as String)
           : null,

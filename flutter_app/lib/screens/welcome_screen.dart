@@ -260,16 +260,32 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   /// which we don't want to leak to users verbatim.
   String? _extractApiMessage(ApiException e) {
     try {
-      final decoded = jsonDecode(e.body);
-      if (decoded is Map && decoded['error'] is String) {
-        final msg = (decoded['error'] as String).trim();
-        // Skip the default Express fallback so we don't show
-        // "Internal server error" — that's a server-side message, not
-        // user-facing copy.
-        if (msg.isEmpty || msg == 'Internal server error') return null;
-        // Guard against backend leaking stack traces or internals.
-        if (msg.length < 200 && !msg.contains('at ')) return msg;
+      final dynamic decoded = jsonDecode(e.body);
+      if (decoded is! Map) return null;
+      final dynamic rawError = decoded['error'];
+      String? msg;
+      if (rawError is String) {
+        msg = rawError.trim();
+      } else if (rawError is Map) {
+        // zod's .flatten() on safeParse failure produces a nested
+        // object like { formErrors: [], fieldErrors: { email: ['Invalid'] } }.
+        // Stringify it so the dialog matcher and inline error can
+        // both find useful copy.
+        final parts = <String>[];
+        for (final entry in rawError.entries) {
+          final v = entry.value;
+          if (v is List) {
+            for (final s in v) {
+              if (s is String) parts.add(s);
+            }
+          } else if (v is String) {
+            parts.add(v);
+          }
+        }
+        msg = parts.isEmpty ? null : parts.join(' · ');
       }
+      if (msg == null || msg.isEmpty || msg == 'Internal server error') return null;
+      if (msg.length < 200 && !msg.contains('at ')) return msg;
     } catch (_) {}
     return null;
   }
