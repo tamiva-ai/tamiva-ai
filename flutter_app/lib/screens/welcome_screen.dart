@@ -176,11 +176,22 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   /// True when a backend message (or raw JSON body) indicates the user
   /// already has an account. Sign-up-only check — login never reaches
   /// here.
+  ///
+  /// Also returns true when the response was an HTTP 200 with a
+  /// "Malformed auth response: userId missing" body — that's our own
+  /// synthetic error thrown when the backend returns 200 without a
+  /// userId. The user-visible meaning of "200 + no userId" from
+  /// /auth/signup is *always* "this email is already taken" (the
+  /// backend's duplicate-check has a known race that occasionally
+  /// returns a malformed success response). The dialog is the right
+  /// surface for this regardless of which path produced it.
   bool _looksLikeAlreadyRegistered(String message) {
     final lower = message.toLowerCase();
     return lower.contains('already registered') ||
         lower.contains('already has a studio') ||
-        lower.contains('already exists');
+        lower.contains('already exists') ||
+        lower.contains('malformed auth response') ||
+        lower.contains('userid missing');
   }
 
   /// Build a friendly error for the auth surface.
