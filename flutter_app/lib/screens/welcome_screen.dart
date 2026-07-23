@@ -52,15 +52,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   bool _signUpMode = false;
   UserFacingError? _error;
 
-  // TEMP: in-app diagnostic panel — removed once signup dialog is confirmed
-  // working. Visible only when this string is non-empty. Replaces ADB /
-  // logcat dependence for one-click debugging from the device.
-  String _diagStatus = '';
-  String _diagBody = '';
-  String _diagExtracted = '';
-  String _diagMatches = '';
-  String _diagAction = '';
-
   // v36 / S3.18 — stable per-submit idempotency key.
   String? _signupIdempotencyKey;
   static const _uuid = Uuid();
@@ -127,39 +118,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         await _doSignIn();
       }
     } catch (e) {
-      // TEMP: ALWAYS log the failure here, regardless of which path the
-      // error takes. _doSignup() also tries to set these, but its catch
-      // block may not run if the exception type is unexpected (e.g.
-      // SocketException, FormatException, generic Exception). Putting it
-      // here as a fallback guarantees the diag panel appears on screen.
-      if (mounted) {
-        setState(() {
-          if (e is ApiException) {
-            _diagStatus = 'statusCode=${e.statusCode}';
-            _diagBody = e.body;
-            _diagExtracted = _extractApiMessage(e) ?? '(null)';
-            _diagMatches =
-                'extracted=${_looksLikeAlreadyRegistered(_diagExtracted)}, rawBody=${_looksLikeAlreadyRegistered(e.body)}, type=ApiException, mounted=$mounted';
-          } else {
-            _diagStatus = 'type=${e.runtimeType}';
-            _diagBody = e.toString();
-            _diagExtracted = '(n/a)';
-            _diagMatches = 'type!=ApiException, mounted=$mounted';
-          }
-          _diagAction = (mounted && e is ApiException &&
-                  (_looksLikeAlreadyRegistered(_extractApiMessage(e) ?? '') ||
-                      _looksLikeAlreadyRegistered(e.body)))
-              ? 'routing to dialog'
-              : 'NOT routing to dialog — rethrowing';
-        });
-      }
-
       // Sign-up only: if the backend says the email/mobile is already
       // registered, surface the dedicated dialog (with the canonical
       // "Account already exists" title + reset-password/sign-in
-      // actions) instead of the generic inline error. Login has its
-      // own copy on the inline path because "wrong password" deserves
-      // a single inline retry hint, not a popup.
+      // actions) instead of the generic inline error. The match is
+      // intentional: 409 duplicates, malformed 2xx that hides a
+      // collision, and zod validation errors all funnel through here.
       if (_signUpMode && e is ApiException) {
         final body = _extractApiMessage(e) ?? e.body;
         if (_looksLikeAlreadyRegistered(body)) {
@@ -318,36 +282,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     try {
       user = await _callSignup();
     } on ApiException catch (e) {
-      // TEMP: in-app diagnostic panel so the failure is visible without
-      // adb/logcat. Captures status code, body, extracted message,
-      // matcher results, and which branch was taken. Stripped once the
-      // signup dialog is confirmed working.
-      final extracted = _extractApiMessage(e);
-      final matchesExtracted = _looksLikeAlreadyRegistered(extracted ?? '');
-      final matchesRaw = _looksLikeAlreadyRegistered(e.body);
-      if (mounted) {
-        setState(() {
-          _diagStatus = 'statusCode=${e.statusCode}';
-          _diagBody = e.body;
-          _diagExtracted = extracted ?? '(null)';
-          _diagMatches =
-              'extracted=$matchesExtracted, rawBody=$matchesRaw, mounted=$mounted';
-          _diagAction = (mounted && (matchesExtracted || matchesRaw))
-              ? 'routing to dialog'
-              : 'NOT routing to dialog — rethrowing';
-        });
-      }
-
       // Route the dedicated "Account already exists" dialog whenever
-      // either:
-      //   a) the JSON-extracted message contains "already..." copy, OR
-      //   b) the raw response body contains those substrings.
-      //
-      // Belt-and-braces because (a) is the structured path and (b)
-      // catches any case where the backend's response shape changed
-      // and `_extractApiMessage` can't parse it (older 4xx wrappers,
-      // unexpected field names, etc).
-      if (mounted && (matchesExtracted || matchesRaw)) {
+      // either the JSON-extracted message or the raw response body
+      // matches. The matcher covers legitimate 409s, malformed 2xx
+      // responses that hide a collision, and zod nested errors.
+      final extracted = _extractApiMessage(e);
+      if (mounted &&
+          (_looksLikeAlreadyRegistered(extracted ?? '') ||
+              _looksLikeAlreadyRegistered(e.body))) {
         await _showAlreadyRegisteredDialog(e.body);
         return;
       }
@@ -623,47 +565,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                           onPressed: _submitting ? null : _submit,
                           child: Text(_signUpMode ? 'Start free  →' : 'Sign in  →'),
                         ),
-                        // TEMP: in-app diagnostic panel. Shows backend response
-                        // info after a failed signup so we can debug without
-                        // adb/logcat. Stripped once signup dialog is
-                        // confirmed working.
-                        if (_diagStatus.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0x22FFFFFF),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: const Color(0x55FFFFFF)),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('DIAG (temporary — screenshot this and send)',
-                                    style: TextStyle(
-                                      color: Color(0xFFFFAA33),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    )),
-                                const SizedBox(height: 6),
-                                SelectableText('status: $_diagStatus',
-                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
-                                const SizedBox(height: 2),
-                                SelectableText('body: $_diagBody',
-                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
-                                const SizedBox(height: 2),
-                                SelectableText('extracted: $_diagExtracted',
-                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
-                                const SizedBox(height: 2),
-                                SelectableText('matches: $_diagMatches',
-                                    style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11)),
-                                const SizedBox(height: 2),
-                                SelectableText('action: $_diagAction',
-                                    style: const TextStyle(color: Color(0xFFFFFFFF), fontSize: 11, fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                          ),
-                        ],
                         if (!_signUpMode) ...[
                           const SizedBox(height: 8),
                           Center(
